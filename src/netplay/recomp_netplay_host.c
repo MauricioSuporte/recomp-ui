@@ -3293,15 +3293,56 @@ static void host_caps_watch_step(void)
  *
  * Only ever toward the host's set, only for a guest, and only when it
  * actually differs. */
-static char g_adopted_set[512];
+/* The host's configuration in the runtime's newline form. mod_set is the
+ * exact text, but the host publishes it empty when it does not fit the wire
+ * field (512 bytes: a dozen packages). The plan always arrives -- one row per
+ * package with its enabled features -- and, for packages without options, it
+ * names the same lines in the same order the runtime's effective set prints
+ * (selection order, then manifest feature order). So an empty mod_set is
+ * rebuilt from the plan instead of leaving the guest on its own selection,
+ * where it could neither adopt nor start. Options cannot be carried this way;
+ * a package with options still needs the exact set, and check_set says so. */
+static int room_want_set(const RNetLobbyMatchCaps *caps, char *want, size_t cap)
+{
+  size_t o = 0;
+  int i;
+  if (!caps || !want || cap < 2)
+    return 0;
+  want[0] = '\0';
+  if (caps->mod_set[0]) {
+    size_t k;
+    for (k = 0; caps->mod_set[k] && o + 2 < cap; ++k)
+      want[o++] = caps->mod_set[k] == ';' ? '\n' : caps->mod_set[k];
+    if (o == 0 || want[o - 1] != '\n') want[o++] = '\n';
+    want[o] = '\0';
+    return 1;
+  }
+  for (i = 0; i < caps->mod_count; ++i) {
+    const char *f = caps->mods[i].feats;
+    while (*f) {
+      const char *e = strchr(f, ',');
+      size_t len = e ? (size_t)(e - f) : strlen(f);
+      int n;
+      if (len) {
+        n = snprintf(want + o, cap - o, "%s@%s/%.*s\n", caps->mods[i].id,
+                     caps->mods[i].ver, (int)len, f);
+        if (n < 0 || (size_t)n >= cap - o) { want[0] = '\0'; return 0; }
+        o += (size_t)n;
+      }
+      if (!e) break;
+      f = e + 1;
+    }
+  }
+  return o > 0;
+}
+
+static char g_adopted_set[4096];
 
 static void mod_set_sync_step(void)
 {
   const RNetLobbyMatchCaps *caps;
-  char want[1024];
+  char want[4096];
   char reason[160];
-  size_t i;
-  size_t o = 0;
 
   if (!g_mods)
     return;
@@ -3323,26 +3364,21 @@ static void mod_set_sync_step(void)
    * and returning early on an empty set would leave a stale allowlist from a
    * previous lobby in force. */
   mods_set_cosmetic_allow(caps->mod_cosmetic_allow);
-  if (!caps->mod_set[0])
+  if (!room_want_set(caps, want, sizeof(want)))
     return;
-  if (!strcmp(g_adopted_set, caps->mod_set))
+  if (!strcmp(g_adopted_set, want))
     return;                      /* already tried this exact set */
-
-  /* Back to the canonical newline form the runtime speaks. */
-  for (i = 0; caps->mod_set[i] && o + 2 < sizeof(want); ++i)
-    want[o++] = caps->mod_set[i] == ';' ? '\n' : caps->mod_set[i];
-  want[o++] = '\n';
-  want[o] = '\0';
 
   reason[0] = '\0';
   if (g_mods->check_set &&
       g_mods->check_set(g_mods->ctx, want, reason, (uint32_t)sizeof(reason)) == 0)
     return;                      /* already matches */
 
-  snprintf(g_adopted_set, sizeof(g_adopted_set), "%s", caps->mod_set);
+  snprintf(g_adopted_set, sizeof(g_adopted_set), "%s", want);
   if (g_mods->adopt_set &&
       g_mods->adopt_set(g_mods->ctx, want, reason, (uint32_t)sizeof(reason)) == 0) {
-    fprintf(stderr, "netplay: matched the host's mod configuration:\n%s", want);
+    fprintf(stderr, "netplay: matched the host's mod configuration%s:\n%s",
+            caps->mod_set[0] ? "" : " (from its plan)", want);
     /* The set changed, so what we announce has changed with it. */
     if (!g_joined_lan) (void)rnet_lobby_set_ready(1);
   } else {
@@ -3356,18 +3392,14 @@ static void mod_set_sync_step(void)
 static int room_mods_ready(void)
 {
   const RNetLobbyMatchCaps *caps = room_caps();
-  char want[1024], reason[160] = {0};
-  size_t i = 0;
-  if (!caps || !caps->valid || !caps->mod_set[0]) return 1;
+  char want[4096], reason[160] = {0};
+  if (!caps || !caps->valid) return 1;
+  if (!room_want_set(caps, want, sizeof(want))) return 1;
   if (!g_mods || !g_mods->check_set) {
     if (!caps_require_mods(caps)) return 1;
     snprintf(g_runtime_error, sizeof(g_runtime_error), "mods_unsupported");
     return 0;
   }
-  for (; caps->mod_set[i] && i + 2 < sizeof(want); ++i)
-    want[i] = caps->mod_set[i] == ';' ? '\n' : caps->mod_set[i];
-  if (i == 0 || want[i-1] != '\n') want[i++] = '\n';
-  want[i] = '\0';
   if (g_mods->check_set(g_mods->ctx, want, reason, sizeof(reason)) == 0) return 1;
   snprintf(g_runtime_error, sizeof(g_runtime_error), "mod_set_mismatch");
   return 0;
