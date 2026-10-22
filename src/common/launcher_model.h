@@ -451,6 +451,8 @@ typedef struct {
     int             num_game_links;
     const char*     game_action_label;
     const char*     game_action_note;
+    const char*     game_version_label;
+    const char*     netplay_notice;
     int (*game_action)(char* msg, size_t msg_cap);
     char            game_action_msg[256];
     bool            game_action_quit;   // the action asked the launcher to close

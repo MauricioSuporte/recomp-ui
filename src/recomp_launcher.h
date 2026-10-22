@@ -46,6 +46,8 @@ extern "C" {
 /* GameInfo.game_links / game_action (community links, e.g. Discord, and one
  * title action such as "Check for updates") are present. */
 #define RECOMP_LAUNCHER_HAS_GAME_LINKS 1
+/* GameInfo.game_version_label / netplay_notice are present. */
+#define RECOMP_LAUNCHER_HAS_NETPLAY_NOTICE 1
 /* Host may #ifdef this when reading Settings.rewind_enabled. */
 #define RECOMP_LAUNCHER_HAS_REWIND_ENABLED 1
 /* Host may #ifdef this when reading Settings.run_ahead. */
@@ -2442,6 +2444,17 @@ typedef struct RecompLauncherCGameInfo {
     const char*        game_action_label;
     const char*        game_action_note;
     int (*game_action)(char* msg, size_t msg_cap);
+
+    /* ---- Version and netplay notice (RECOMP_LAUNCHER_HAS_NETPLAY_NOTICE) ---
+     * game_version_label: short text drawn after the platform in the header
+     * (e.g. "v2.0.2"), so players can tell which build they run.
+     * netplay_notice: while non-empty, a warning drawn on the online Netplay
+     * pages and the reason Host Lobby is disabled (e.g. "v2.0.3 is out:
+     * update to play online"). Both are read every frame, so a host may point
+     * them at buffers it fills later (a background update check). Appended
+     * for ABI stability; NULL/empty draws nothing and blocks nothing. */
+    const char*        game_version_label;
+    const char*        netplay_notice;
 } RecompLauncherCGameInfo;
 
 /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */

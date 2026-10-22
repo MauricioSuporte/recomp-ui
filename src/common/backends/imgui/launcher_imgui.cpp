@@ -1963,8 +1963,23 @@ static void open_game_link(const char* url) {
 #endif
 }
 
+static bool netplay_notice_active(const LauncherModel* m) {
+    return m->netplay_notice && m->netplay_notice[0];
+}
+
+static void draw_netplay_notice(const LauncherModel* m, const LauncherTheme& th,
+                                float availw) {
+    if (!netplay_notice_active(m)) return;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + availw);
+    ImGui::TextColored(col(th.warn), "%s", m->netplay_notice);
+    ImGui::PopTextWrapPos();
+}
+
 static void draw_game_links(LauncherModel* m, const LauncherTheme& th,
                             float availw, bool netplay_only) {
+    if (netplay_only) {
+        draw_netplay_notice(m, th, availw);
+    }
     if (!netplay_only && m->game_action && m->game_action_label &&
         m->game_action_label[0] && !m->in_session) {
         ImGui::Dummy(ImVec2(0, px(8)));
@@ -12749,9 +12764,15 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
              * equal utilities with no obvious way in. Network Settings and
              * Refresh stay neutral, which is what gives the other two their
              * weight -- accenting everything would say nothing. */
+            /* A title can hold hosting back (an outdated build: its room
+             * would only ever be seen by other outdated builds). */
             if (neon_cta("##np_host", ui_text("Host Lobby"),
-                         ImVec2(action_w, play_h), true, /*arrow*/false))
+                         ImVec2(action_w, play_h),
+                         !netplay_notice_active(m) || lan_mode, /*arrow*/false))
                 open_host();
+            if (netplay_notice_active(m) && !lan_mode &&
+                ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", m->netplay_notice);
             ImGui::SetCursorScreenPos(ImVec2(origin.x + action_w + gap, cta_y));
             if (ImGui::Button(ui_text("Network Settings"), ImVec2(settings_w, play_h)))
                 open_network();
@@ -12806,7 +12827,9 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                 if (ImGui::BeginChild("##np_footer_scroll", ImVec2(menu_w, menu_h),
                                       ImGuiChildFlags_None,
                                       ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
-                    if (ImGui::Selectable(ui_text("Host Lobby"))) {
+                    if (ImGui::Selectable(ui_text("Host Lobby"), false,
+                                          netplay_notice_active(m) && !lan_mode
+                                              ? ImGuiSelectableFlags_Disabled : 0)) {
                         open_host();
                     }
                     if (ImGui::Selectable(ui_text("Network Settings"))) {
@@ -14182,6 +14205,12 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         } else if (m->platform && m->platform[0]) {
             ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
             ImGui::TextUnformatted(m->platform);
+            ImGui::PopStyleColor();
+        }
+        if (m->game_version_label && m->game_version_label[0]) {
+            if (!(g_wordmark.id && g_wordmark.w > 0)) ImGui::SameLine(0, px(10));
+            ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+            ImGui::TextUnformatted(m->game_version_label);
             ImGui::PopStyleColor();
         }
     ImGui::EndGroup();
