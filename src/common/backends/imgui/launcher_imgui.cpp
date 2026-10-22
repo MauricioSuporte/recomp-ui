@@ -14799,10 +14799,18 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     g_th = th;
     LNG_ImplSDL_InitForOpenGL(p->window, p->gl);
 #ifdef LNG_GLES2
-    ImGui_ImplOpenGL3_Init("#version 100");   // GLES 2 GLSL (host ANGLE backend)
+    const char* glsl_version = "#version 100";   // GLES 2 GLSL (host ANGLE backend)
 #else
-    ImGui_ImplOpenGL3_Init("#version 330");
+    /* GL 3.0-3.2 drivers (Intel Sandy Bridge stops at 3.1) get GLSL 130; the
+     * backend checks its 3.2/3.3 features against the context at runtime. */
+    const char* glsl_version =
+        (p->gl_major > 3 || (p->gl_major == 3 && p->gl_minor >= 3))
+            ? "#version 330" : "#version 130";
 #endif
+    if (!ImGui_ImplOpenGL3_Init(glsl_version))
+        std::fprintf(stderr, "[rui] ImGui OpenGL3 backend failed to initialize "
+                             "(GL %d.%d, %s)\n", p->gl_major, p->gl_minor,
+                     glsl_version);
     launcher_boot_timing_mark("rui:imgui_gl_ready");
 
     // Box art: per-game path from the ABI when given (multi-variant repos

@@ -163,6 +163,49 @@ static void fit_window_to_display(LauncherPlatform* p, int logical_w, int logica
     launcher_platform_refresh_metrics(p);
 }
 
+#ifndef LNG_GLES2
+/* Desktop GL: a 3.3 core context first, then any 3.0+ context. Intel's
+ * Sandy Bridge driver stops at OpenGL 3.1, and ImGui's OpenGL3 backend runs
+ * on 3.0 with GLSL 130 (it checks 3.2/3.3 features at runtime). Below 3.0 --
+ * SDL returns Microsoft's GDI OpenGL 1.1 when the driver lacks
+ * WGL_ARB_create_context -- the backend cannot load and its first font
+ * rebuild used to dereference NULL; refuse it so the host boots without the
+ * launcher. */
+static bool create_launcher_gl_context(LauncherPlatform* p) {
+    static const struct { int major, minor, profile; } kTries[] = {
+        { 3, 3, SDL_GL_CONTEXT_PROFILE_CORE },
+        { 3, 0, 0 },
+    };
+    for (size_t i = 0; i < SDL_arraysize(kTries); ++i) {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, kTries[i].major);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, kTries[i].minor);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, kTries[i].profile);
+        SDL_GLContext ctx = SDL_GL_CreateContext(p->window);
+        if (!ctx) {
+            fprintf(stderr, "[launcher] SDL_GL_CreateContext(%d.%d) failed: %s\n",
+                    kTries[i].major, kTries[i].minor, SDL_GetError());
+            continue;
+        }
+        SDL_GL_MakeCurrent(p->window, ctx);
+        char version[128];
+        int major = 0, minor = 0;
+        if (launcher_gl_context_version(&major, &minor, version, sizeof(version)) &&
+            major >= 3) {
+            p->gl = ctx;
+            p->gl_major = major;
+            p->gl_minor = minor;
+            fprintf(stderr, "[launcher] OpenGL %s\n", version);
+            return true;
+        }
+        fprintf(stderr, "[launcher] OpenGL context below 3.0 (GL_VERSION=%s)\n",
+                version);
+        SDL_GL_MakeCurrent(p->window, NULL);
+        SDL_GL_DeleteContext(ctx);
+    }
+    return false;
+}
+#endif
+
 bool launcher_platform_open(LauncherPlatform* p, const char* title,
                             int logical_w, int logical_h) {
     if (!p) return false;
@@ -264,36 +307,24 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
         return false;
     }
 
+#ifdef LNG_GLES2
     p->gl = SDL_GL_CreateContext(p->window);
-    if (!p->gl) {
+    if (p->gl) {
+        SDL_GL_MakeCurrent(p->window, p->gl);
+        p->gl_major = 2;
+        p->gl_minor = 0;
+    } else {
         fprintf(stderr, "[launcher] SDL_GL_CreateContext failed: %s\n", SDL_GetError());
+    }
+#else
+    create_launcher_gl_context(p);
+#endif
+    if (!p->gl) {
         SDL_DestroyWindow(p->window);
         p->window = NULL;
         if (s_quit_sdl) SDL_Quit();
         return false;
     }
-
-    SDL_GL_MakeCurrent(p->window, p->gl);
-
-#ifndef LNG_GLES2
-    /* See launcher_platform_sdl3.c: a legacy GL 1.1 context handed back for a
-     * 3.3 core request would crash the ImGui OpenGL3 backend. Refuse it so the
-     * host boots without the launcher. */
-    {
-        char gl_version[128];
-        if (!launcher_gl_context_meets(3, 3, gl_version, sizeof(gl_version))) {
-            fprintf(stderr, "[launcher] OpenGL 3.3 unavailable (GL_VERSION=%s); "
-                            "skipping the launcher window\n", gl_version);
-            SDL_GL_MakeCurrent(p->window, NULL);
-            SDL_GL_DeleteContext(p->gl);
-            p->gl = NULL;
-            SDL_DestroyWindow(p->window);
-            p->window = NULL;
-            if (s_quit_sdl) SDL_Quit();
-            return false;
-        }
-    }
-#endif
 
     SDL_GL_SetSwapInterval(1);
 

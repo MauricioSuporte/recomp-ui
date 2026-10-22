@@ -50,9 +50,15 @@ typedef struct LauncherPlatform {
     bool  scale_changed;   // set for one frame after a DPI/monitor change
     bool  size_changed;    // set for one frame after a resize
     bool  should_quit;     // window close requested
+
+    // Version of the GL context actually created: 3.3+ normally, 3.0-3.2 on
+    // drivers that stop there (Intel Sandy Bridge: 3.1). The ImGui backend
+    // picks its GLSL dialect from it.
+    int   gl_major, gl_minor;
 } LauncherPlatform;
 
-// Create the window (RESIZABLE + HIGH_PIXEL_DENSITY) and a GL 3.3 core context.
+// Create the window (RESIZABLE + HIGH_PIXEL_DENSITY) and a GL 3.3 core context
+// (any GL 3.0+ context when the driver has no 3.3).
 // Returns false if SDL/GL initialization fails (caller boots as if skipped).
 bool launcher_platform_open(LauncherPlatform* p, const char* title,
                             int logical_w, int logical_h);

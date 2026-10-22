@@ -33,15 +33,15 @@ LauncherTexture launcher_texture_load_colorkey(const char* path, int tolerance);
 
 void launcher_texture_free(LauncherTexture* t);
 
-// True when the CURRENT desktop GL context reports at least major.minor in
-// GL_VERSION. On Windows, SDL hands back a legacy context (Microsoft's
-// "GDI Generic" OpenGL 1.1) instead of failing when the driver lacks
-// WGL_ARB_create_context -- e.g. a GPU with no vendor driver running on the
-// Microsoft Basic Display Adapter. The ImGui OpenGL3 backend cannot run on
-// such a context, so the platform layer refuses it and the host boots
-// without the launcher. `out_version` (optional) receives GL_VERSION for logs.
-bool launcher_gl_context_meets(int major, int minor,
-                               char* out_version, size_t out_version_len);
+// Version of the CURRENT desktop GL context, parsed from GL_VERSION. Returns
+// false when there is no usable version string. `out_version` (optional)
+// receives GL_VERSION for logs. On Windows, SDL hands back a legacy context
+// (Microsoft's "GDI Generic" OpenGL 1.1) instead of failing when the driver
+// lacks WGL_ARB_create_context -- e.g. a GPU with no vendor driver running on
+// the Microsoft Basic Display Adapter -- so the platform layer checks this
+// before accepting a context.
+bool launcher_gl_context_version(int* major, int* minor,
+                                 char* out_version, size_t out_version_len);
 
 // Decode an image file to a tightly-packed RGBA8 buffer, WITHOUT touching GL.
 // For the one consumer that needs pixels rather than a texture: the window /

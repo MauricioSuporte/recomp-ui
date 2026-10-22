@@ -147,6 +147,47 @@ static void fit_window_to_display(LauncherPlatform* p, int logical_w, int logica
     launcher_platform_refresh_metrics(p);
 }
 
+/* Desktop GL: a 3.3 core context first, then any 3.0+ context. Intel's
+ * Sandy Bridge driver stops at OpenGL 3.1, and ImGui's OpenGL3 backend runs
+ * on 3.0 with GLSL 130 (it checks 3.2/3.3 features at runtime). Below 3.0 --
+ * SDL returns Microsoft's GDI OpenGL 1.1 when the driver lacks
+ * WGL_ARB_create_context -- the backend cannot load and its first font
+ * rebuild used to dereference NULL; refuse it so the host boots without the
+ * launcher. */
+static bool create_launcher_gl_context(LauncherPlatform* p) {
+    static const struct { int major, minor, profile; } kTries[] = {
+        { 3, 3, SDL_GL_CONTEXT_PROFILE_CORE },
+        { 3, 0, 0 },
+    };
+    for (size_t i = 0; i < SDL_arraysize(kTries); ++i) {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, kTries[i].major);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, kTries[i].minor);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, kTries[i].profile);
+        SDL_GLContext ctx = SDL_GL_CreateContext(p->window);
+        if (!ctx) {
+            fprintf(stderr, "[launcher] SDL_GL_CreateContext(%d.%d) failed: %s\n",
+                    kTries[i].major, kTries[i].minor, SDL_GetError());
+            continue;
+        }
+        SDL_GL_MakeCurrent(p->window, ctx);
+        char version[128];
+        int major = 0, minor = 0;
+        if (launcher_gl_context_version(&major, &minor, version, sizeof(version)) &&
+            major >= 3) {
+            p->gl = ctx;
+            p->gl_major = major;
+            p->gl_minor = minor;
+            fprintf(stderr, "[launcher] OpenGL %s\n", version);
+            return true;
+        }
+        fprintf(stderr, "[launcher] OpenGL context below 3.0 (GL_VERSION=%s)\n",
+                version);
+        SDL_GL_MakeCurrent(p->window, NULL);
+        SDL_GL_DestroyContext(ctx);
+    }
+    return false;
+}
+
 bool launcher_platform_open(LauncherPlatform* p, const char* title,
                             int logical_w, int logical_h) {
     if (!p) return false;
@@ -166,9 +207,7 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
                 SDL_VERSIONNUM_MICRO(version), SDL_GetRevision());
     }
 
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    // Context version/profile: create_launcher_gl_context().
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
@@ -194,36 +233,11 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
         return false;
     }
 
-    p->gl = SDL_GL_CreateContext(p->window);
-    if (!p->gl) {
-        fprintf(stderr, "[launcher] SDL_GL_CreateContext failed: %s\n", SDL_GetError());
+    if (!create_launcher_gl_context(p)) {
         SDL_DestroyWindow(p->window);
         p->window = NULL;
         if (s_quit_sdl) SDL_Quit();
         return false;
-    }
-
-    SDL_GL_MakeCurrent(p->window, p->gl);
-
-    /* Without WGL_ARB_create_context (no vendor GPU driver: the Microsoft
-     * Basic Display Adapter's GDI OpenGL 1.1) SDL returns a legacy context
-     * instead of failing the 3.3 core request. ImGui_ImplOpenGL3_Init then
-     * fails without installing its backend data and the first font rebuild
-     * dereferences NULL. Refuse the context: the host boots the game without
-     * the launcher, through its own non-GL presenter. */
-    {
-        char gl_version[128];
-        if (!launcher_gl_context_meets(3, 3, gl_version, sizeof(gl_version))) {
-            fprintf(stderr, "[launcher] OpenGL 3.3 unavailable (GL_VERSION=%s); "
-                            "skipping the launcher window\n", gl_version);
-            SDL_GL_MakeCurrent(p->window, NULL);
-            SDL_GL_DestroyContext(p->gl);
-            p->gl = NULL;
-            SDL_DestroyWindow(p->window);
-            p->window = NULL;
-            if (s_quit_sdl) SDL_Quit();
-            return false;
-        }
     }
 
     SDL_GL_SetSwapInterval(1);   // vsync — a launcher has no reason to spin

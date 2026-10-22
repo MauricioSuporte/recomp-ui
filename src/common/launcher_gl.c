@@ -90,8 +90,8 @@ void launcher_texture_free(LauncherTexture* t) {
     }
 }
 
-bool launcher_gl_context_meets(int major, int minor,
-                               char* out_version, size_t out_version_len) {
+bool launcher_gl_context_version(int* major, int* minor,
+                                 char* out_version, size_t out_version_len) {
     const char* version = (const char*)glGetString(GL_VERSION);
     if (out_version && out_version_len)
         snprintf(out_version, out_version_len, "%s", version ? version : "(null)");
@@ -101,5 +101,7 @@ bool launcher_gl_context_meets(int major, int minor,
     while (*version && (*version < '0' || *version > '9')) ++version;
     int have_major = 0, have_minor = 0;
     if (sscanf(version, "%d.%d", &have_major, &have_minor) != 2) return false;
-    return have_major > major || (have_major == major && have_minor >= minor);
+    if (major) *major = have_major;
+    if (minor) *minor = have_minor;
+    return true;
 }
