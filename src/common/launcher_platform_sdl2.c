@@ -274,6 +274,27 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
     }
 
     SDL_GL_MakeCurrent(p->window, p->gl);
+
+#ifndef LNG_GLES2
+    /* See launcher_platform_sdl3.c: a legacy GL 1.1 context handed back for a
+     * 3.3 core request would crash the ImGui OpenGL3 backend. Refuse it so the
+     * host boots without the launcher. */
+    {
+        char gl_version[128];
+        if (!launcher_gl_context_meets(3, 3, gl_version, sizeof(gl_version))) {
+            fprintf(stderr, "[launcher] OpenGL 3.3 unavailable (GL_VERSION=%s); "
+                            "skipping the launcher window\n", gl_version);
+            SDL_GL_MakeCurrent(p->window, NULL);
+            SDL_GL_DeleteContext(p->gl);
+            p->gl = NULL;
+            SDL_DestroyWindow(p->window);
+            p->window = NULL;
+            if (s_quit_sdl) SDL_Quit();
+            return false;
+        }
+    }
+#endif
+
     SDL_GL_SetSwapInterval(1);
 
     if (!test_hidden)

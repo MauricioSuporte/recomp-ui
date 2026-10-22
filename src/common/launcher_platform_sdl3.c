@@ -204,6 +204,28 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
     }
 
     SDL_GL_MakeCurrent(p->window, p->gl);
+
+    /* Without WGL_ARB_create_context (no vendor GPU driver: the Microsoft
+     * Basic Display Adapter's GDI OpenGL 1.1) SDL returns a legacy context
+     * instead of failing the 3.3 core request. ImGui_ImplOpenGL3_Init then
+     * fails without installing its backend data and the first font rebuild
+     * dereferences NULL. Refuse the context: the host boots the game without
+     * the launcher, through its own non-GL presenter. */
+    {
+        char gl_version[128];
+        if (!launcher_gl_context_meets(3, 3, gl_version, sizeof(gl_version))) {
+            fprintf(stderr, "[launcher] OpenGL 3.3 unavailable (GL_VERSION=%s); "
+                            "skipping the launcher window\n", gl_version);
+            SDL_GL_MakeCurrent(p->window, NULL);
+            SDL_GL_DestroyContext(p->gl);
+            p->gl = NULL;
+            SDL_DestroyWindow(p->window);
+            p->window = NULL;
+            if (s_quit_sdl) SDL_Quit();
+            return false;
+        }
+    }
+
     SDL_GL_SetSwapInterval(1);   // vsync — a launcher has no reason to spin
 
     launcher_platform_refresh_metrics(p);

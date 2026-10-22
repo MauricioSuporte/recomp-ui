@@ -1529,8 +1529,12 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
                                                         : "provider");
         }
     }
-    ImGui_ImplOpenGL3_DestroyFontsTexture();
-    ImGui_ImplOpenGL3_CreateFontsTexture();
+    /* The OpenGL3 backend dereferences its data unconditionally; it is NULL
+     * when ImGui_ImplOpenGL3_Init failed (no usable GL loader/context). */
+    if (ImGui::GetIO().BackendRendererUserData) {
+        ImGui_ImplOpenGL3_DestroyFontsTexture();
+        ImGui_ImplOpenGL3_CreateFontsTexture();
+    }
 
     ImGuiStyle style; ImGui::StyleColorsDark(&style);
     style.WindowRounding = th.radius_lg; style.ChildRounding = th.radius_lg;

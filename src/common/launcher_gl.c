@@ -4,6 +4,9 @@
 
 #include "launcher_sdlcompat.h"   // GL header for the active SDL version
 
+#include <stdio.h>
+#include <string.h>
+
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F   // GL 1.2 token; runtime driver supports it
 #endif
@@ -85,4 +88,18 @@ void launcher_texture_free(LauncherTexture* t) {
         glDeleteTextures(1, &id);
         t->id = 0;
     }
+}
+
+bool launcher_gl_context_meets(int major, int minor,
+                               char* out_version, size_t out_version_len) {
+    const char* version = (const char*)glGetString(GL_VERSION);
+    if (out_version && out_version_len)
+        snprintf(out_version, out_version_len, "%s", version ? version : "(null)");
+    if (!version) return false;
+    /* Desktop GL_VERSION starts "<major>.<minor>"; skip any prefix a driver
+     * might put in front (GLES contexts say "OpenGL ES x.y"). */
+    while (*version && (*version < '0' || *version > '9')) ++version;
+    int have_major = 0, have_minor = 0;
+    if (sscanf(version, "%d.%d", &have_major, &have_minor) != 2) return false;
+    return have_major > major || (have_major == major && have_minor >= minor);
 }
