@@ -7471,17 +7471,37 @@ static int np_rb_prediction_frames_from_rtt_ms(int rtt_ms, int delay_frames) {
 
 static int np_lobby_max_peer_rtt_ms(LauncherModel* m,
                                     const RecompLauncherCNetplayCallbacks* np) {
-    int max_rtt = 0;
+    int max_rtt = 0, second = 0, remotes = 0;
     if (!np || !np->member_count || !np->member_get) return 0;
     const int nmem = np->member_count(np->ctx);
     for (int mi = 0; mi < nmem; ++mi) {
         RecompLauncherCNetplayMember mem{};
         if (!np->member_get(np->ctx, mi, &mem)) continue;
         if (mem.is_local) continue;
-        if (mem.latency_ms > max_rtt) max_rtt = mem.latency_ms;
+        ++remotes;
+        if (mem.latency_ms > max_rtt) {
+            second = max_rtt;
+            max_rtt = mem.latency_ms;
+        } else if (mem.latency_ms > second) {
+            second = mem.latency_ms;
+        }
     }
     (void)m;
+    /* Online sessions are a star through the host (ice_hub): with two or
+     * more guests, one guest's input reaches another over two legs, so the
+     * slowest pair is half of each of the two worst host RTTs -- the same
+     * figure as their sum taken as one RTT. A three-player room with guests
+     * at 470 ms and 60 ms ran at D=7 and stalled every few frames. */
+    if (remotes >= 2) return max_rtt + second;
     return max_rtt;
+}
+
+/* The engine's settled sync mode, when the title or operator forced one:
+ * a title that runs delay-sync (SNES_NET_MODE=delay) must not get the
+ * rollback delay tiers just because the UI toggle still reads rollback. */
+static bool np_engine_forces_delay_sync(void) {
+    const char* mode = getenv("SNES_NET_MODE");
+    return mode && (strcmp(mode, "delay") == 0 || strcmp(mode, "lockstep") == 0);
 }
 
 /* Player-seat ceiling for a room of this kind (LAN / Direct IP or online):
@@ -9105,7 +9125,7 @@ static void np_lobby_start(LauncherModel* m,
     /* Ensure engine match_caps.rollback matches UI before start. */
     if (np->rollback_set)
         (void)np->rollback_set(np->ctx, m->netplay_rollback ? 1 : 0);
-    const bool use_rb = m->netplay_rollback;
+    const bool use_rb = m->netplay_rollback && !np_engine_forces_delay_sync();
     const int max_rtt = np_lobby_max_peer_rtt_ms(m, np);
     /* Auto D: rollback uses §59 WAN-aware tiers; delay-sync uses the padded
      * one-way formula. Manual keeps the match settings panel's value.
