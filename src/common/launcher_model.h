@@ -446,6 +446,14 @@ typedef struct {
     const RecompLauncherCRomRevision* rom_revisions;
     int             num_rom_revisions;
     const char*     rom_help;
+    // ---- title links / action (RecompLauncherCGameInfo.game_links) ----
+    const RecompLauncherCGameLink* game_links;
+    int             num_game_links;
+    const char*     game_action_label;
+    const char*     game_action_note;
+    int (*game_action)(char* msg, size_t msg_cap);
+    char            game_action_msg[256];
+    bool            game_action_quit;   // the action asked the launcher to close
     int (*rom_describe)(void* ctx, const uint8_t* image, size_t len,
                         char* out, size_t out_size);
     void*           rom_describe_ctx;

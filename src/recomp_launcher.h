@@ -43,6 +43,9 @@ extern "C" {
 #define RECOMP_LAUNCHER_HAS_REWIND_DEPTH 1
 /* Host may #ifdef this when reading Settings.rewind_interval. */
 #define RECOMP_LAUNCHER_HAS_REWIND_INTERVAL 1
+/* GameInfo.game_links / game_action (community links, e.g. Discord, and one
+ * title action such as "Check for updates") are present. */
+#define RECOMP_LAUNCHER_HAS_GAME_LINKS 1
 /* Host may #ifdef this when reading Settings.rewind_enabled. */
 #define RECOMP_LAUNCHER_HAS_REWIND_ENABLED 1
 /* Host may #ifdef this when reading Settings.run_ahead. */
@@ -1691,6 +1694,15 @@ typedef struct RecompLauncherCDisc {
  * hex (any case); NULL/"" leaves a digest out. An entry matches when every
  * digest it gives equals the file's, so give at least one. A supported match
  * verifies the ROM; any other match is reported by label, with `note`. */
+/* A link the title offers the player (its community server, its releases).
+ * Opened in the browser. Borrowed for the launcher's lifetime. */
+typedef struct RecompLauncherCGameLink {
+    const char* label;   /* button text, e.g. "Join the Discord server" */
+    const char* url;     /* https://... */
+    const char* note;    /* optional one-line tooltip; NULL none */
+    int         netplay; /* 1: also shown on the online Netplay page */
+} RecompLauncherCGameLink;
+
 typedef struct RecompLauncherCRomRevision {
     const char* label;       /* "Mega Man X (USA) (Rev 1)" */
     const char* sha256_hex;
@@ -2414,6 +2426,22 @@ typedef struct RecompLauncherCGameInfo {
     int (*rom_describe)(void* ctx, const uint8_t* image, size_t len,
                         char* out, size_t out_size);
     void*              rom_describe_ctx;
+
+    /* ---- Title links and action (RECOMP_LAUNCHER_HAS_GAME_LINKS) ----------
+     * game_links: buttons drawn under the ROM panel on the main page (and on
+     * the online Netplay page for entries with netplay=1).
+     * game_action: one title-defined action button drawn above them (e.g. an
+     * updater). It runs on the UI thread and returns 1 when the launcher
+     * should quit (the action replaced the process, e.g. an updater that has
+     * to overwrite this executable), 0 to stay; msg (may be empty) is shown
+     * under the button either way. game_action_note: optional status line
+     * (e.g. "v1.2.1 available") the host fills before the launcher opens.
+     * Appended for ABI stability; zero-init draws nothing. */
+    const RecompLauncherCGameLink* game_links;
+    int                num_game_links;
+    const char*        game_action_label;
+    const char*        game_action_note;
+    int (*game_action)(char* msg, size_t msg_cap);
 } RecompLauncherCGameInfo;
 
 /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */

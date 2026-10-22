@@ -405,6 +405,11 @@ void launcher_model_init(LauncherModel* m,
         m->rom_revisions        = game->num_rom_revisions > 0 ? game->rom_revisions : NULL;
         m->num_rom_revisions    = m->rom_revisions ? game->num_rom_revisions : 0;
         m->rom_help             = game->rom_help;
+        m->game_links           = game->num_game_links > 0 ? game->game_links : NULL;
+        m->num_game_links       = m->game_links ? game->num_game_links : 0;
+        m->game_action_label    = game->game_action_label;
+        m->game_action_note     = game->game_action_note;
+        m->game_action          = game->game_action;
         m->rom_describe         = game->rom_describe;
         m->rom_describe_ctx     = game->rom_describe_ctx;
 

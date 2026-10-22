@@ -1951,6 +1951,55 @@ static const SettingsChoice kScaleChoices[LNG_WINDOW_SCALE_MAX] = {
 static const SettingsChoice kFullscreenChoices[] = {
     {0, "Off"}, {1, "Borderless"}, {2, "Exclusive"}
 };
+
+/* Title links (GameInfo.game_links) as full-width buttons, and the title's
+ * action (GameInfo.game_action). netplay_only: draw only the links flagged
+ * for the online Netplay page, without the action. */
+static void open_game_link(const char* url) {
+#if defined(LNG_SDL3)
+    (void)SDL_OpenURL(url);
+#else
+    (void)SDL_OpenURL(url);
+#endif
+}
+
+static void draw_game_links(LauncherModel* m, const LauncherTheme& th,
+                            float availw, bool netplay_only) {
+    if (!netplay_only && m->game_action && m->game_action_label &&
+        m->game_action_label[0] && !m->in_session) {
+        ImGui::Dummy(ImVec2(0, px(8)));
+        if (m->game_action_note && m->game_action_note[0]) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + availw);
+            ImGui::TextColored(col(th.accent2), "%s", m->game_action_note);
+            ImGui::PopTextWrapPos();
+        }
+        if (ImGui::Button(m->game_action_label, ImVec2(availw, px(34)))) {
+            m->game_action_msg[0] = '\0';
+            if (m->game_action(m->game_action_msg, sizeof(m->game_action_msg))) {
+                m->game_action_quit = true;
+                m->action = LNG_ACTION_QUIT;
+            }
+        }
+        if (m->game_action_msg[0]) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + availw);
+            ImGui::TextColored(col(th.text_muted), "%s", m->game_action_msg);
+            ImGui::PopTextWrapPos();
+        }
+    }
+    for (int i = 0; i < m->num_game_links; ++i) {
+        const RecompLauncherCGameLink* link = &m->game_links[i];
+        if (!link->label || !link->url || !link->url[0]) continue;
+        if (netplay_only && !link->netplay) continue;
+        ImGui::Dummy(ImVec2(0, px(4)));
+        ImGui::PushID(i);
+        if (ImGui::Button(link->label, ImVec2(availw, px(30))))
+            open_game_link(link->url);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", link->note && link->note[0] ? link->note : link->url);
+        ImGui::PopID();
+    }
+}
+
 static const SettingsChoice kRunAheadChoices[RECOMP_LAUNCHER_RUN_AHEAD_MAX + 1] = {
     {0, "Off"}, {1, "1 frame"}, {2, "2 frames"}, {3, "3 frames"}, {4, "4 frames"}
 };
@@ -2404,6 +2453,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         ImGui::EndChild();
         ImGui::PopStyleColor(2);
     }
+
+    draw_game_links(m, th, availw, false);
 
     // SAVES lives in the GAME card as a compact row (no separate card / eyebrow).
     // Present only for games with battery SRAM — data-driven, never by name.
@@ -10695,7 +10746,11 @@ void np_join_selected(LauncherModel* m) {
  * list about once a second with the lobby list. */
 static void draw_netplay_online_panel(LauncherModel* m, const LauncherTheme& th,
                                       const RecompLauncherCNetplayCallbacks* np) {
-    (void)m;
+    /* The title's community links (its Discord server, to find matches). */
+    if (m->num_game_links > 0) {
+        draw_game_links(m, th, ImGui::GetContentRegionAvail().x, true);
+        ImGui::Spacing();
+    }
     const int n = np->online_count(np->ctx);
     ImGui::TextColored(col(th.accent2), "PLAYERS ONLINE");
     ImGui::SameLine();
