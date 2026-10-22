@@ -627,8 +627,113 @@ static void case_ice_relay(void)
 }
 #endif
 
+/* ---- mod-set agreement: a fake runtime with a simple enabled-set string --- */
+static char fake_selection[512];
+static int fake_adopts;
+static int fake_check(void *ctx, const char *want, char *reason, uint32_t cap)
+{
+    (void)ctx; (void)reason; (void)cap;
+    const char *mine = fake_selection[0] ? fake_selection : "(none)\n";
+    return strcmp(mine, want) == 0 ? 0 : 1;
+}
+static int fake_adopt(void *ctx, const char *want, char *reason, uint32_t cap)
+{
+    (void)ctx; (void)reason; (void)cap;
+    fake_adopts++;
+    /* The real runtime switches every feature off, then on per line. */
+    snprintf(fake_selection, sizeof(fake_selection), "%s",
+             strcmp(want, "(none)\n") == 0 ? "" : want);
+    return 0;
+}
+static RecompNetplayModHooks fake_mods;
+
+static void case_mod_set_vanilla_host(void)
+{
+    RNetLobbyMatchCaps caps;
+    char want[512];
+    printf("  mod set: host without mods, guest with mods\n");
+    memset(&caps, 0, sizeof(caps));
+    caps.valid = 1;    /* vanilla host: empty mod_set, empty plan */
+    ck(room_want_set(&caps, want, sizeof(want)) == 1,
+       "a vanilla host's set is readable, not 'nothing to compare'");
+    ck(strcmp(want, "(none)\n") == 0, "and it is the empty set");
+
+    memset(&fake_mods, 0, sizeof(fake_mods));
+    fake_mods.check_set = fake_check;
+    fake_mods.adopt_set = fake_adopt;
+    g_mods = &fake_mods;
+    g_adopted_set[0] = '\0';
+    snprintf(fake_selection, sizeof(fake_selection),
+             "superbomberman5.ptbr@0.1.0/ptbr\n");
+    fake_adopts = 0;
+    ck(mods_adopt_want(want) == 1, "guest switches its own mods off");
+    ck(fake_selection[0] == '\0' && fake_adopts == 1, "selection is vanilla");
+    ck(mods_adopt_want(want) == 0, "and then already matches");
+    g_mods = NULL;
+}
+
+static void case_mod_set_guest_extra_and_realign(void)
+{
+    RNetLobbyMatchCaps caps;
+    char want[512];
+    printf("  mod set: guest with an extra mod, re-enabled after adopting\n");
+    memset(&caps, 0, sizeof(caps));
+    caps.valid = 1;
+    snprintf(caps.mod_set, sizeof(caps.mod_set),
+             "superbomberman5.normal-coop@0.1.0/coop");
+    caps.mod_count = 1;
+    snprintf(caps.mods[0].id, sizeof(caps.mods[0].id), "superbomberman5.normal-coop");
+    snprintf(caps.mods[0].ver, sizeof(caps.mods[0].ver), "0.1.0");
+    snprintf(caps.mods[0].feats, sizeof(caps.mods[0].feats), "coop");
+    ck(room_want_set(&caps, want, sizeof(want)) == 1, "host set readable");
+    ck(strcmp(want, "superbomberman5.normal-coop@0.1.0/coop\n") == 0,
+       "exactly the host's features");
+
+    memset(&fake_mods, 0, sizeof(fake_mods));
+    fake_mods.check_set = fake_check;
+    fake_mods.adopt_set = fake_adopt;
+    g_mods = &fake_mods;
+    g_adopted_set[0] = '\0';
+    snprintf(fake_selection, sizeof(fake_selection),
+             "superbomberman5.normal-coop@0.1.0/coop\nsuperbomberman5.gold-battle@0.1.0/gold\n");
+    ck(mods_adopt_want(want) == 1, "extra mod: adopted");
+    ck(strcmp(fake_selection, want) == 0, "extra mod switched off");
+    /* The player turns the extra mod back on while waiting in the lobby. */
+    snprintf(fake_selection, sizeof(fake_selection),
+             "superbomberman5.normal-coop@0.1.0/coop\nsuperbomberman5.gold-battle@0.1.0/gold\n");
+    ck(mods_adopt_want(want) == 1, "re-enabled mod: adopted again, not cached");
+    ck(strcmp(fake_selection, want) == 0, "and switched off again");
+    g_mods = NULL;
+}
+
+static void case_mod_set_plan_only_and_unreadable(void)
+{
+    RNetLobbyMatchCaps caps;
+    char want[512];
+    printf("  mod set: plan-only host and an unreadable LAN plan\n");
+    memset(&caps, 0, sizeof(caps));
+    caps.valid = 1;
+    caps.mod_count = 1;   /* mod_set too long to publish: rebuilt from plan */
+    snprintf(caps.mods[0].id, sizeof(caps.mods[0].id), "a.pkg");
+    snprintf(caps.mods[0].ver, sizeof(caps.mods[0].ver), "1.0.0");
+    snprintf(caps.mods[0].feats, sizeof(caps.mods[0].feats), "x,y");
+    ck(room_want_set(&caps, want, sizeof(want)) == 1 &&
+       strcmp(want, "a.pkg@1.0.0/x\na.pkg@1.0.0/y\n") == 0,
+       "plan rows become the set");
+    memset(&caps, 0, sizeof(caps));
+    caps.valid = 1;
+    snprintf(caps.mod_set, sizeof(caps.mod_set), "(plan-too-large)");
+    ck(room_want_set(&caps, want, sizeof(want)) == ROOM_SET_UNREADABLE,
+       "an oversized LAN plan is not mistaken for a set to adopt");
+    memset(&caps, 0, sizeof(caps));
+    ck(room_want_set(&caps, want, sizeof(want)) == 0, "invalid caps: nothing");
+}
+
 int main(void)
 {
+    case_mod_set_vanilla_host();
+    case_mod_set_guest_extra_and_realign();
+    case_mod_set_plan_only_and_unreadable();
     case_host_first_standard_and_swapped();
     case_host_first_sparse_four();
     case_host_first_host_in_gallery();

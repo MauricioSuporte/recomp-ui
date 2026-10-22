@@ -3301,7 +3301,18 @@ static void host_caps_watch_step(void)
  * (selection order, then manifest feature order). So an empty mod_set is
  * rebuilt from the plan instead of leaving the guest on its own selection,
  * where it could neither adopt nor start. Options cannot be carried this way;
- * a package with options still needs the exact set, and check_set says so. */
+ * a package with options still needs the exact set, and check_set says so.
+ *
+ * A host running NO mods publishes an empty mod_set and an empty plan. That is
+ * a set too -- the empty one -- and it reads as "(none)", the runtime's own
+ * spelling, so a guest with mods of its own switches them off like any other
+ * difference. Treating it as "nothing to compare" let such a guest launch its
+ * own mods against a vanilla host.
+ *
+ * Returns 1 with the set in want, 0 when there is nothing to compare (no valid
+ * caps), and -1 when the host's set is known to exist but cannot be read here
+ * (a LAN room whose plan did not fit): the caller must not launch on it. */
+#define ROOM_SET_UNREADABLE (-1)
 static int room_want_set(const RNetLobbyMatchCaps *caps, char *want, size_t cap)
 {
   size_t o = 0;
@@ -3309,6 +3320,14 @@ static int room_want_set(const RNetLobbyMatchCaps *caps, char *want, size_t cap)
   if (!caps || !want || cap < 2)
     return 0;
   want[0] = '\0';
+  if (!caps->valid)
+    return 0;
+  if (!strcmp(caps->mod_set, "(plan-too-large)"))
+    return ROOM_SET_UNREADABLE;
+  if (!caps->mod_set[0] && caps->mod_count <= 0) {
+    snprintf(want, cap, "(none)\n");
+    return 1;
+  }
   if (caps->mod_set[0]) {
     size_t k;
     for (k = 0; caps->mod_set[k] && o + 2 < cap; ++k)
@@ -3333,16 +3352,54 @@ static int room_want_set(const RNetLobbyMatchCaps *caps, char *want, size_t cap)
       f = e + 1;
     }
   }
-  return o > 0;
+  if (o == 0) {
+    /* A plan whose rows name no features enables nothing: still a set. */
+    snprintf(want, cap, "(none)\n");
+    return 1;
+  }
+  return 1;
 }
 
 static char g_adopted_set[4096];
+
+/* Make this peer's selection the given set: enabled features AND disabled
+ * ones, since a guest with an extra mod differs as surely as one missing a
+ * mod. Returns 1 when the selection was changed to match, 0 when it already
+ * matched, -1 when it cannot be matched (logged once per set).
+ *
+ * Only a FAILED set is remembered. Remembering successes too meant a guest who
+ * switched a mod back on after adopting was never realigned, and was refused
+ * at Start instead; now the next step simply adopts the host's set again. */
+static int mods_adopt_want(const char *want)
+{
+  char reason[160];
+
+  if (!g_mods || !want || !want[0])
+    return 0;
+  reason[0] = '\0';
+  if (g_mods->check_set &&
+      g_mods->check_set(g_mods->ctx, want, reason, (uint32_t)sizeof(reason)) == 0) {
+    g_adopted_set[0] = '\0';
+    return 0;                    /* already matches */
+  }
+  if (!strcmp(g_adopted_set, want))
+    return -1;                   /* already failed on this exact set */
+  if (g_mods->adopt_set &&
+      g_mods->adopt_set(g_mods->ctx, want, reason, (uint32_t)sizeof(reason)) == 0) {
+    g_adopted_set[0] = '\0';
+    fprintf(stderr, "netplay: matched the host's mod configuration:\n%s", want);
+    return 1;
+  }
+  snprintf(g_adopted_set, sizeof(g_adopted_set), "%s", want);
+  fprintf(stderr, "netplay: cannot match the host's mod set: %s\n",
+          reason[0] ? reason : "(no reason given)");
+  return -1;
+}
 
 static void mod_set_sync_step(void)
 {
   const RNetLobbyMatchCaps *caps;
   char want[4096];
-  char reason[160];
 
   if (!g_mods)
     return;
@@ -3364,27 +3421,10 @@ static void mod_set_sync_step(void)
    * and returning early on an empty set would leave a stale allowlist from a
    * previous lobby in force. */
   mods_set_cosmetic_allow(caps->mod_cosmetic_allow);
-  if (!room_want_set(caps, want, sizeof(want)))
+  if (room_want_set(caps, want, sizeof(want)) != 1)
     return;
-  if (!strcmp(g_adopted_set, want))
-    return;                      /* already tried this exact set */
-
-  reason[0] = '\0';
-  if (g_mods->check_set &&
-      g_mods->check_set(g_mods->ctx, want, reason, (uint32_t)sizeof(reason)) == 0)
-    return;                      /* already matches */
-
-  snprintf(g_adopted_set, sizeof(g_adopted_set), "%s", want);
-  if (g_mods->adopt_set &&
-      g_mods->adopt_set(g_mods->ctx, want, reason, (uint32_t)sizeof(reason)) == 0) {
-    fprintf(stderr, "netplay: matched the host's mod configuration%s:\n%s",
-            caps->mod_set[0] ? "" : " (from its plan)", want);
-    /* The set changed, so what we announce has changed with it. */
-    if (!g_joined_lan) (void)rnet_lobby_set_ready(1);
-  } else {
-    fprintf(stderr, "netplay: cannot match the host's mod set: %s\n",
-            reason[0] ? reason : "(no reason given)");
-  }
+  if (mods_adopt_want(want) == 1 && !g_joined_lan)
+    (void)rnet_lobby_set_ready(1); /* what we announce changed with the set */
 }
 
 /* Failed adoption must not launch an old local plan, including in delay mode
@@ -3393,8 +3433,15 @@ static int room_mods_ready(void)
 {
   const RNetLobbyMatchCaps *caps = room_caps();
   char want[4096], reason[160] = {0};
+  int got;
   if (!caps || !caps->valid) return 1;
-  if (!room_want_set(caps, want, sizeof(want))) return 1;
+  got = room_want_set(caps, want, sizeof(want));
+  if (got == ROOM_SET_UNREADABLE) {
+    snprintf(g_runtime_error, sizeof(g_runtime_error), "mod_set_mismatch");
+    return 0;
+  }
+  if (got != 1) return 1;
+  if (!g_mods && !strcmp(want, "(none)\n")) return 1; /* vanilla on both */
   if (!g_mods || !g_mods->check_set) {
     if (!caps_require_mods(caps)) return 1;
     snprintf(g_runtime_error, sizeof(g_runtime_error), "mods_unsupported");
