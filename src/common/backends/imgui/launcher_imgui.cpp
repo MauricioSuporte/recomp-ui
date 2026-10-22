@@ -11037,6 +11037,12 @@ void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
                            (err && err[0]) ? err : "");
         ImGui::PopTextWrapPos();
     }
+    /* The title's community links (its Discord server, where players find
+     * matches), under the two cards. */
+    if (m->num_game_links > 0) {
+        ImGui::SetCursorScreenPos(ImVec2(row.x, row.y + px(236)));
+        draw_game_links(m, th, card_w, true);
+    }
 }
 
 /* The sign-in page. Only ever reached on the way to online play. */
