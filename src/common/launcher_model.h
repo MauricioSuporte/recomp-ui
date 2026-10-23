@@ -460,6 +460,11 @@ typedef struct {
     char            external_join_lobby[40];
     double          external_join_started;
     bool            external_join_connect_sent;
+    /* Room invite text (Copy Invite / Join from Invite). */
+    int (*room_invite_text)(void* ctx, char* out, size_t out_cap);
+    int (*room_invite_accept)(void* ctx, const char* text);
+    void*           room_invite_ctx;
+    double          room_invite_copied_at;
     int (*game_action)(char* msg, size_t msg_cap);
     char            game_action_msg[256];
     bool            game_action_quit;   // the action asked the launcher to close

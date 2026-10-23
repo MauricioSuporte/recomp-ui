@@ -10619,6 +10619,26 @@ void draw_lobby(LauncherModel* m, const LauncherTheme& th) {
 #endif
 }
 
+/* Room invites (RecompLauncherCGameInfo.room_invite_text / _accept): a
+ * message the player pastes into a chat, and the way back in from one. */
+static bool np_room_invite_text(LauncherModel* m, char* out, size_t cap) {
+    out[0] = '\0';
+    return m->room_invite_text &&
+           m->room_invite_text(m->room_invite_ctx, out, cap) == 1 && out[0];
+}
+
+/* Join from Invite: hand the clipboard to the title, which queues the room
+ * for the external-join path a Discord invite already uses. */
+static void np_join_from_clipboard_invite(LauncherModel* m) {
+    if (!m->room_invite_accept) return;
+    const char* clip = ImGui::GetClipboardText();
+    if (clip && clip[0] && m->room_invite_accept(m->room_invite_ctx, clip) == 1)
+        return;
+    std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                  "No room invite in the clipboard. Copy your friend's whole "
+                  "invite message, then press Join from Invite.");
+}
+
 /* The lobby view's footer band: Leave (left), Mods (beside it), Play (right,
  * host only). Drawn by draw_footer in the fixed band every view shares. */
 static void draw_lobby_footer(LauncherModel* m, const LauncherTheme& th,
@@ -10677,6 +10697,29 @@ static void draw_lobby_footer(LauncherModel* m, const LauncherTheme& th,
 #else
     (void)mods_w;
 #endif
+    /* Copy Invite — a message with the room's code, for a Discord chat or
+     * anywhere else; friends paste it into Join from Invite. Only while the
+     * title says the room can be joined that way (online, open seats). */
+    {
+        char invite[512];
+        if (np_room_invite_text(m, invite, sizeof(invite))) {
+            const float invite_w = px(150);
+            const bool copied = m->room_invite_copied_at > 0.0 &&
+                ImGui::GetTime() - m->room_invite_copied_at < 2.0;
+            ImGui::SetCursorScreenPos(ImVec2(next_x, cta_y));
+            if (ImGui::Button(copied ? ui_text("Copied!##invite")
+                                     : ui_text("Copy Invite##invite"),
+                              ImVec2(invite_w, play_h))) {
+                ImGui::SetClipboardText(invite);
+                m->room_invite_copied_at = ImGui::GetTime();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip("Copy an invite to paste in Discord or any chat.\n"
+                                  "Friends copy it and press Join from Invite\n"
+                                  "on the Online Netplay page.");
+            next_x += invite_w + gap;
+        }
+    }
     (void)next_x;
 
     if (s.is_host) {
@@ -12827,8 +12870,12 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         const float settings_w = px(170.0f);
         const float refresh_w = px(120.0f);
         const float gap = px(10);
+        /* Join from Invite: online only, when the title reads invites. */
+        const bool show_invite = !lan_mode && m->room_invite_accept != nullptr;
+        const float invite_w = px(170.0f);
         const float row_need =
-            action_w + gap + settings_w + gap + refresh_w + gap + action_w;
+            action_w + gap + settings_w + gap + refresh_w + gap + action_w +
+            (show_invite ? invite_w + gap : 0.0f);
         const bool compact = fullw < row_need + px(8);
 
         auto open_host = [&]() {
@@ -12891,6 +12938,16 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                 np_refresh_lobby_list(m);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Reload server lobbies and rescan LAN/Direct IP");
+            if (show_invite) {
+                ImGui::SetCursorScreenPos(ImVec2(
+                    origin.x + action_w + gap + settings_w + gap + refresh_w + gap,
+                    cta_y));
+                if (ImGui::Button(ui_text("Join from Invite"), ImVec2(invite_w, play_h)))
+                    np_join_from_clipboard_invite(m);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Copy a friend's room invite (from Discord or any "
+                                      "chat), then press this to join their room");
+            }
             ImGui::SetCursorScreenPos(ImVec2(origin.x + fullw - action_w, cta_y));
             if (lan_mode) {
                 if (ImGui::Button(ui_text("Join Direct"), ImVec2(action_w, play_h)))
@@ -12950,6 +13007,9 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip(
                             "Reload server lobbies and rescan LAN/Direct IP");
+                    if (show_invite &&
+                        ImGui::Selectable(ui_text("Join from Invite")))
+                        np_join_from_clipboard_invite(m);
                     if (lan_mode) {
                         if (ImGui::Selectable(ui_text("Join Direct"))) {
                             m->netplay_direct_modal_open = true;

@@ -413,6 +413,9 @@ void launcher_model_init(LauncherModel* m,
         m->netplay_notice       = game->netplay_notice;
         m->poll_external_join   = game->poll_external_join;
         m->external_join_ctx    = game->external_join_ctx;
+        m->room_invite_text     = game->room_invite_text;
+        m->room_invite_accept   = game->room_invite_accept;
+        m->room_invite_ctx      = game->room_invite_ctx;
         m->game_action          = game->game_action;
         m->rom_describe         = game->rom_describe;
         m->rom_describe_ctx     = game->rom_describe_ctx;

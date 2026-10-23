@@ -2466,9 +2466,22 @@ typedef struct RecompLauncherCGameInfo {
      * Appended for ABI stability; NULL disables it. */
     int (*poll_external_join)(void* ctx, char* lobby_id, size_t lobby_id_cap);
     void*              external_join_ctx;
+
+    /* ---- Room invite text (RECOMP_LAUNCHER_HAS_ROOM_INVITE) ---------------
+     * room_invite_text writes a message the player can paste anywhere (a
+     * Discord chat, say) to invite friends to the online room they sit in;
+     * return 1 when the room can be joined that way, 0 to hide the lobby's
+     * Copy Invite button. room_invite_accept is handed whatever text the
+     * player pasted into Join from Invite: return 1 after queueing the room
+     * for poll_external_join, 0 when the text holds no invite. Both run on
+     * the UI thread. Appended for ABI stability; NULL disables each. */
+    int (*room_invite_text)(void* ctx, char* out, size_t out_cap);
+    int (*room_invite_accept)(void* ctx, const char* text);
+    void*              room_invite_ctx;
 } RecompLauncherCGameInfo;
 
 #define RECOMP_LAUNCHER_HAS_EXTERNAL_JOIN 1
+#define RECOMP_LAUNCHER_HAS_ROOM_INVITE 1
 
 /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */
 #define RECOMP_LAUNCHER_HAS_TEXTURE_FILTER_CATALOG 1
