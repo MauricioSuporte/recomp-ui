@@ -2455,7 +2455,20 @@ typedef struct RecompLauncherCGameInfo {
      * for ABI stability; NULL/empty draws nothing and blocks nothing. */
     const char*        game_version_label;
     const char*        netplay_notice;
+
+    /* ---- External join (RECOMP_LAUNCHER_HAS_EXTERNAL_JOIN) ----------------
+     * poll_external_join is called once per launcher frame on the UI thread
+     * (so a host may also use it as its launcher tick). Return 1 after writing
+     * an online lobby id (the id list rows carry) to open Online Netplay,
+     * connect to the lobby server if needed, and join that room -- e.g. a
+     * Discord invite the player accepted. A room with a password opens the
+     * password prompt; progress and errors show in the netplay status line.
+     * Appended for ABI stability; NULL disables it. */
+    int (*poll_external_join)(void* ctx, char* lobby_id, size_t lobby_id_cap);
+    void*              external_join_ctx;
 } RecompLauncherCGameInfo;
+
+#define RECOMP_LAUNCHER_HAS_EXTERNAL_JOIN 1
 
 /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */
 #define RECOMP_LAUNCHER_HAS_TEXTURE_FILTER_CATALOG 1

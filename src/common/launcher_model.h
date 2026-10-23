@@ -453,6 +453,13 @@ typedef struct {
     const char*     game_action_note;
     const char*     game_version_label;
     const char*     netplay_notice;
+    /* External join (Discord invite): see RecompLauncherCGameInfo. */
+    int (*poll_external_join)(void* ctx, char* lobby_id, size_t lobby_id_cap);
+    void*           external_join_ctx;
+    bool            external_join_pending;
+    char            external_join_lobby[40];
+    double          external_join_started;
+    bool            external_join_connect_sent;
     int (*game_action)(char* msg, size_t msg_cap);
     char            game_action_msg[256];
     bool            game_action_quit;   // the action asked the launcher to close

@@ -411,6 +411,8 @@ void launcher_model_init(LauncherModel* m,
         m->game_action_note     = game->game_action_note;
         m->game_version_label   = game->game_version_label;
         m->netplay_notice       = game->netplay_notice;
+        m->poll_external_join   = game->poll_external_join;
+        m->external_join_ctx    = game->external_join_ctx;
         m->game_action          = game->game_action;
         m->rom_describe         = game->rom_describe;
         m->rom_describe_ctx     = game->rom_describe_ctx;

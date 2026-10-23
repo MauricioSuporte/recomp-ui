@@ -10929,6 +10929,91 @@ static void np_enter_netplay(LauncherModel* m, int mode) {
     launcher_model_set_view(m, LNG_VIEW_NETPLAY);
 }
 
+/* External join (RecompLauncherCGameInfo.poll_external_join), e.g. a Discord
+ * invite: open Online Netplay, connect, and join the given room once the
+ * lobby server is up. Gives up after 30 s without a connection. */
+static void np_service_external_join(LauncherModel* m) {
+    if (m->poll_external_join) {
+        char id[sizeof(m->external_join_lobby)] = {0};
+        if (m->poll_external_join(m->external_join_ctx, id, sizeof(id)) && id[0]) {
+            std::snprintf(m->external_join_lobby, sizeof(m->external_join_lobby), "%s", id);
+            m->external_join_pending = true;
+            m->external_join_started = ImGui::GetTime();
+            m->external_join_connect_sent = false;
+        }
+    }
+    if (!m->external_join_pending) return;
+    const auto* np = np_cb(m);
+    if (!np || !m->netplay_supported || !np->join) {
+        m->external_join_pending = false;
+        return;
+    }
+    if (np->in_lobby && np->in_lobby(np->ctx)) {
+        m->external_join_pending = false;
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Leave your current room first to join the invite.");
+        return;
+    }
+    if (m->view != LNG_VIEW_NETPLAY || m->netplay_mode != 2)
+        np_enter_netplay(m, 2);
+    if (!np_connected(m)) {
+        if (!m->external_join_connect_sent) {
+            np_connect_and_list(m);
+            m->external_join_connect_sent = true;
+        }
+        if (ImGui::GetTime() - m->external_join_started > 30.0) {
+            m->external_join_pending = false;
+            std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                          "Could not reach the lobby server to join the invite.");
+        } else {
+            std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                          "Joining your friend's room\u2026");
+        }
+        return;
+    }
+    m->external_join_pending = false;
+    /* Find the room in the list: it tells whether it needs a password. */
+    int row_index = -1;
+    RecompLauncherCNetplayLobby row{};
+    if (np->list_count && np->list_get) {
+        const int n = np->list_count(np->ctx);
+        for (int i = 0; i < n; ++i) {
+            RecompLauncherCNetplayLobby r{};
+            if (np->list_get(np->ctx, i, &r) &&
+                std::strcmp(r.lobby_id, m->external_join_lobby) == 0) {
+                row = r;
+                row_index = i;
+                break;
+            }
+        }
+    }
+    if (row_index >= 0 && row.has_password) {
+        m->netplay_selected_lobby = row_index;
+        m->netplay_password[0] = '\0';
+        m->netplay_password_modal_open = true;
+        return;
+    }
+    char guest_bind[64];
+    if (!np_prepare_guest_bind(guest_bind, sizeof(guest_bind),
+                               m->netplay_status, sizeof(m->netplay_status)))
+        return;
+    const int rc = np->join(np->ctx, m->external_join_lobby, "", guest_bind);
+    if (rc == 0) {
+        m->netplay_local_room = false;
+        m->netplay_host_endpoint[0] = '\0';
+        m->netplay_lobby_max_slots =
+            row.max_slots >= 2 ? row.max_slots : np_game_max_players(m, false);
+        m->netplay_status[0] = '\0';
+    } else if (rc == -2) {
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "That room needs a password: join it from the list.");
+    } else {
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Could not join your friend's room (it may be full, "
+                      "closed, or on another version).");
+    }
+}
+
 /* One big choice card. Sized to be hit with a controller, not just a mouse. */
 static bool np_mode_card(const LauncherTheme& th, const char* id, const char* title,
                          const char* body, float w, bool accent) {
@@ -14333,6 +14418,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     const float footer_h = px(92.0f);   // divider + clearance + CTA + its glow
     float body_h = ImGui::GetContentRegionAvail().y - footer_h;
     if (body_h < px(80.0f)) body_h = px(80.0f);
+    np_service_external_join(m);
     begin_container("body", ImVec2(0, body_h));
     switch (m->view) {
         case LNG_VIEW_DASHBOARD:  draw_dashboard(m, th, logical_w); break;
