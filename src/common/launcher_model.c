@@ -263,6 +263,12 @@ static int lm_same_cache_name(const char* a, const char* b) {
     return *abase == '\0' && *bbase == '\0';
 }
 
+/* Host hooks for portable sidecars (RecompLauncherCGameInfo.portable_path /
+ * resolve_stored_path), captured at init: the sidecar helpers below have no
+ * model in hand. NULL keeps the historical absolute paths. */
+static int (*g_lm_portable_path)(const char*, char*, size_t);
+static int (*g_lm_resolve_stored_path)(const char*, char*, size_t);
+
 static int lm_read_first_line(const char* path, char* out, size_t cap) {
     FILE* f;
     size_t len;
@@ -305,6 +311,18 @@ static int lm_cache_candidate_path(const char* dir,
     return n > 0 && (size_t)n < cap;
 }
 
+/* A stored sidecar line, made openable here (relative to the game folder,
+ * or written on another machine). Always returns 1: an unresolved value is
+ * left as it was for the readability check that follows. */
+static int lm_resolve_sidecar_value(char* value, size_t cap) {
+    char resolved[1024];
+    if (!g_lm_resolve_stored_path || !value || !value[0]) return 1;
+    resolved[0] = '\0';
+    if (g_lm_resolve_stored_path(value, resolved, sizeof(resolved)) && resolved[0])
+        safe_copy(value, cap, resolved);
+    return 1;
+}
+
 static int lm_try_cached_rom_name(const char* cache_name,
                                   char* out,
                                   size_t out_cap) {
@@ -315,6 +333,7 @@ static int lm_try_cached_rom_name(const char* cache_name,
     if (lm_cache_candidate_path(NULL, cache_name, cache_path,
                                 sizeof(cache_path)) &&
         lm_read_first_line(cache_path, candidate, sizeof(candidate)) &&
+        lm_resolve_sidecar_value(candidate, sizeof(candidate)) &&
         lm_path_readable(candidate)) {
         safe_copy(out, out_cap, candidate);
         return 1;
@@ -323,6 +342,7 @@ static int lm_try_cached_rom_name(const char* cache_name,
         lm_cache_candidate_path(exe_dir, cache_name, cache_path,
                                 sizeof(cache_path)) &&
         lm_read_first_line(cache_path, candidate, sizeof(candidate)) &&
+        lm_resolve_sidecar_value(candidate, sizeof(candidate)) &&
         lm_path_readable(candidate)) {
         safe_copy(out, out_cap, candidate);
         return 1;
@@ -396,6 +416,8 @@ void launcher_model_init(LauncherModel* m,
         /* 0 = unset (caller predates the field) -> assume 2 players. */
         m->player_count         = game->num_players ? clampi(game->num_players, 1, LNG_MAX_PLAYERS) : 2;
         m->rom_cache_path       = game->rom_cache_path;
+        g_lm_portable_path       = game->portable_path;
+        g_lm_resolve_stored_path = game->resolve_stored_path;
         m->expected_crc         = game->expected_crc;
         m->has_expected_crc     = game->has_expected_crc;
         m->known_sha256         = game->known_sha256;
@@ -2714,7 +2736,29 @@ static void lm_write_sidecar_in_dir(const char* dir, const char* name,
     }
     FILE* f = fopen(path, "w");
     if (!f) return;
-    fprintf(f, "%s\n", value);
+    if (g_lm_portable_path) {
+        /* One path per line (disc.cfg lists a set); each stored portably. */
+        const char* line = value;
+        int first = 1;
+        while (line) {
+            const char* nl = strchr(line, '\n');
+            size_t n = nl ? (size_t)(nl - line) : strlen(line);
+            char one[1024], stored[1024];
+            if (n >= sizeof(one)) n = sizeof(one) - 1;
+            memcpy(one, line, n);
+            one[n] = '\0';
+            if (!first) fputc('\n', f);
+            first = 0;
+            if (one[0] && g_lm_portable_path(one, stored, sizeof(stored)) && stored[0])
+                fputs(stored, f);
+            else
+                fputs(one, f);
+            line = nl ? nl + 1 : NULL;
+        }
+        fputc('\n', f);
+    } else {
+        fprintf(f, "%s\n", value);
+    }
     fclose(f);
 }
 

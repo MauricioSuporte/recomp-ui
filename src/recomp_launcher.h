@@ -2478,10 +2478,22 @@ typedef struct RecompLauncherCGameInfo {
     int (*room_invite_text)(void* ctx, char* out, size_t out_cap);
     int (*room_invite_accept)(void* ctx, const char* text);
     void*              room_invite_ctx;
+
+    /* ---- Portable path sidecars (RECOMP_LAUNCHER_HAS_PORTABLE_PATHS) ------
+     * A game folder copied to another PC must not carry the old machine's
+     * absolute paths. portable_path turns a path the launcher is about to
+     * write into rom.cfg / disc.cfg / bios.cfg into the form to store (e.g.
+     * relative to the game folder); resolve_stored_path turns a stored value
+     * back into one that opens here (return 1 when it found a readable file).
+     * Both return 0 when they cannot help, and the value is used unchanged.
+     * Appended for ABI stability; NULL keeps absolute sidecars. */
+    int (*portable_path)(const char* path, char* out, size_t out_cap);
+    int (*resolve_stored_path)(const char* stored, char* out, size_t out_cap);
 } RecompLauncherCGameInfo;
 
 #define RECOMP_LAUNCHER_HAS_EXTERNAL_JOIN 1
 #define RECOMP_LAUNCHER_HAS_ROOM_INVITE 1
+#define RECOMP_LAUNCHER_HAS_PORTABLE_PATHS 1
 
 /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */
 #define RECOMP_LAUNCHER_HAS_TEXTURE_FILTER_CATALOG 1
