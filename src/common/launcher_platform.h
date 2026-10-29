@@ -55,7 +55,17 @@ typedef struct LauncherPlatform {
     // drivers that stop there (Intel Sandy Bridge: 3.1). The ImGui backend
     // picks its GLSL dialect from it.
     int   gl_major, gl_minor;
+
+    // LNG_SDL_RENDERER builds (SDL3): the launcher draws through SDL_Renderer
+    // instead of a GL context -- Direct3D 11 first on Windows -- and `gl` is
+    // NULL. `renderer` is the SDL_Renderer*, `renderer_name` its driver name.
+    void*       renderer;
+    const char* renderer_name;
 } LauncherPlatform;
+
+// The live SDL_Renderer* of an LNG_SDL_RENDERER launcher (NULL otherwise):
+// texture uploads and screenshots go through it.
+void* launcher_platform_active_renderer(void);
 
 // Create the window (RESIZABLE + HIGH_PIXEL_DENSITY) and a GL 3.3 core context
 // (any GL 3.0+ context when the driver has no 3.3).

@@ -45,6 +45,10 @@
   #define LNG_ImplSDL_Shutdown       ImGui_ImplSDL2_Shutdown
 #endif
 #include "imgui_impl_opengl3.h"
+#if defined(LNG_SDL_RENDERER)
+  /* SDL3 SDL_Renderer launcher: Direct3D 11 on Windows (launcher_platform). */
+  #include "imgui_impl_sdlrenderer3.h"
+#endif
 
 #include <atomic>
 #if defined(_MSC_VER)
@@ -373,7 +377,9 @@ LauncherTexture g_tpak;
 // Disc-verdict icons (verify.mode==1 systems, e.g. PSX) — keyed by
 // VerifyResult.verdict (0 none,1 ok,2 warn,3 bad); see draw_verdict_block().
 LauncherTexture g_verdict_ok, g_verdict_warn, g_verdict_bad, g_verdict_none;
-ImTextureID tid(const LauncherTexture& t) { return (ImTextureID)(intptr_t)t.id; }
+ImTextureID tid(const LauncherTexture& t) {
+    return t.handle ? (ImTextureID)(intptr_t)t.handle : (ImTextureID)(intptr_t)t.id;
+}
 
 LauncherPad g_pads[LNG_MAX_PADS];   // live gamepad list (repolled every frame)
 int         g_pad_count = 0;
@@ -1532,8 +1538,13 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
     /* The OpenGL3 backend dereferences its data unconditionally; it is NULL
      * when ImGui_ImplOpenGL3_Init failed (no usable GL loader/context). */
     if (ImGui::GetIO().BackendRendererUserData) {
+#if defined(LNG_SDL_RENDERER)
+        ImGui_ImplSDLRenderer3_DestroyFontsTexture();
+        ImGui_ImplSDLRenderer3_CreateFontsTexture();
+#else
         ImGui_ImplOpenGL3_DestroyFontsTexture();
         ImGui_ImplOpenGL3_CreateFontsTexture();
+#endif
     }
 
     ImGuiStyle style; ImGui::StyleColorsDark(&style);
@@ -14950,6 +14961,12 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     std::atomic_signal_fence(std::memory_order_seq_cst);
 #endif
     g_th = th;
+#if defined(LNG_SDL_RENDERER)
+    ImGui_ImplSDL3_InitForSDLRenderer(p->window, (SDL_Renderer*)p->renderer);
+    if (!ImGui_ImplSDLRenderer3_Init((SDL_Renderer*)p->renderer))
+        std::fprintf(stderr, "[rui] ImGui SDL_Renderer backend failed to initialize (%s)\n",
+                     p->renderer_name ? p->renderer_name : "?");
+#else
     LNG_ImplSDL_InitForOpenGL(p->window, p->gl);
 #ifdef LNG_GLES2
     const char* glsl_version = "#version 100";   // GLES 2 GLSL (host ANGLE backend)
@@ -14964,6 +14981,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         std::fprintf(stderr, "[rui] ImGui OpenGL3 backend failed to initialize "
                              "(GL %d.%d, %s)\n", p->gl_major, p->gl_minor,
                      glsl_version);
+#endif
     launcher_boot_timing_mark("rui:imgui_gl_ready");
 
     // Box art: per-game path from the ABI when given (multi-variant repos
@@ -15231,7 +15249,11 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
 
         }
 
+#if defined(LNG_SDL_RENDERER)
+        ImGui_ImplSDLRenderer3_NewFrame();
+#else
         ImGui_ImplOpenGL3_NewFrame();
+#endif
         /* Suspend ImGui's GAMEPAD navigation while a bind capture is open.
          *
          * The SDL backend POLLS gamepad state in NewFrame (see
@@ -15284,11 +15306,22 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
             launch_commit.job.start();
         }
 
-        glViewport(0, 0, p->pixel_w, p->pixel_h);
         const LngColor bg = th->background;
+#if defined(LNG_SDL_RENDERER)
+        {
+            SDL_Renderer* r = (SDL_Renderer*)p->renderer;
+            SDL_SetRenderScale(r, 1.0f, 1.0f);
+            SDL_SetRenderViewport(r, NULL);
+            SDL_SetRenderDrawColorFloat(r, bg.r, bg.g, bg.b, bg.a);
+            SDL_RenderClear(r);
+            ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), r);
+        }
+#else
+        glViewport(0, 0, p->pixel_w, p->pixel_h);
         glClearColor(bg.r, bg.g, bg.b, bg.a);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#endif
         if (launch_commit.job.pending()) {
             if (launcher_debug_step_pending(p)) launch_commit.close_requested = true;
         } else {
@@ -15317,7 +15350,11 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     launcher_texture_free(&g_wordmark);
     for (int i = 0; i < 5; ++i) launcher_texture_free(&g_cart[i]);
     launcher_texture_free(&g_tpak);
+#if defined(LNG_SDL_RENDERER)
+    ImGui_ImplSDLRenderer3_Shutdown();
+#else
     ImGui_ImplOpenGL3_Shutdown();
+#endif
     LNG_ImplSDL_Shutdown();
     ImGui::DestroyContext();
     launcher_boot_timing_mark("rui:backend_closed");

@@ -154,6 +154,7 @@ static void fit_window_to_display(LauncherPlatform* p, int logical_w, int logica
  * WGL_ARB_create_context -- the backend cannot load and its first font
  * rebuild used to dereference NULL; refuse it so the host boots without the
  * launcher. */
+#if !defined(LNG_SDL_RENDERER)
 static bool create_launcher_gl_context(LauncherPlatform* p) {
     static const struct { int major, minor, profile; } kTries[] = {
         { 3, 3, SDL_GL_CONTEXT_PROFILE_CORE },
@@ -187,6 +188,47 @@ static bool create_launcher_gl_context(LauncherPlatform* p) {
     }
     return false;
 }
+#endif
+
+#if defined(LNG_SDL_RENDERER)
+static SDL_Renderer* s_renderer;
+void* launcher_platform_active_renderer(void) { return s_renderer; }
+
+/* SDL_Renderer instead of a GL context. On Windows Direct3D 11 is asked for
+ * by name (it is also SDL's own first choice there), so a machine whose GPU
+ * has no usable OpenGL driver -- Microsoft's Basic Display Adapter, old Intel
+ * parts -- still gets a hardware launcher; any other driver SDL offers is the
+ * fallback, then its software renderer. LNG_RENDER_DRIVER=<name> overrides
+ * (e.g. "opengl", "vulkan", "software") for tests. */
+static bool create_launcher_renderer(LauncherPlatform* p) {
+    const char* forced = getenv("LNG_RENDER_DRIVER");
+    const char* tries[3] = { NULL, NULL, NULL };
+    int n = 0;
+    if (forced && forced[0]) tries[n++] = forced;
+#if defined(_WIN32)
+    else tries[n++] = "direct3d11";
+#endif
+    tries[n++] = NULL;   /* SDL's default order */
+    for (int i = 0; i < n; ++i) {
+        SDL_Renderer* r = SDL_CreateRenderer(p->window, tries[i]);
+        if (!r) {
+            fprintf(stderr, "[launcher] SDL_CreateRenderer(%s) failed: %s\n",
+                    tries[i] ? tries[i] : "default", SDL_GetError());
+            continue;
+        }
+        s_renderer = r;
+        p->renderer = r;
+        p->renderer_name = SDL_GetRendererName(r);
+        SDL_SetRenderVSync(r, 1);   // vsync -- a launcher has no reason to spin
+        fprintf(stderr, "[launcher] renderer %s\n",
+                p->renderer_name ? p->renderer_name : "?");
+        return true;
+    }
+    return false;
+}
+#else
+void* launcher_platform_active_renderer(void) { return NULL; }
+#endif
 
 bool launcher_platform_open(LauncherPlatform* p, const char* title,
                             int logical_w, int logical_h) {
@@ -207,16 +249,21 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
                 SDL_VERSIONNUM_MICRO(version), SDL_GetRevision());
     }
 
+#if !defined(LNG_SDL_RENDERER)
     // Context version/profile: create_launcher_gl_context().
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
+#endif
 
     // HIGH_PIXEL_DENSITY is the linchpin: it asks SDL for a native-resolution
     // backbuffer on fractional-scale displays (esp. Wayland) instead of a
     // logical-size buffer the compositor blurs up. RESIZABLE lets us exercise
     // the live-resize requirement.
     SDL_WindowFlags flags =
-        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#if !defined(LNG_SDL_RENDERER)
+        SDL_WINDOW_OPENGL |
+#endif
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     /* Automated launcher checks (LNG_SCRIPT + LNG_TEST_HIDDEN, as on SDL2)
      * must not steal the user's desktop/focus. */
     if (getenv("LNG_SCRIPT") && getenv("LNG_TEST_HIDDEN")) flags |= SDL_WINDOW_HIDDEN;
@@ -233,14 +280,20 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
         return false;
     }
 
+#if defined(LNG_SDL_RENDERER)
+    if (!create_launcher_renderer(p)) {
+#else
     if (!create_launcher_gl_context(p)) {
+#endif
         SDL_DestroyWindow(p->window);
         p->window = NULL;
         if (s_quit_sdl) SDL_Quit();
         return false;
     }
 
+#if !defined(LNG_SDL_RENDERER)
     SDL_GL_SetSwapInterval(1);   // vsync — a launcher has no reason to spin
+#endif
 
     launcher_platform_refresh_metrics(p);
 
@@ -315,11 +368,21 @@ void launcher_platform_refresh_metrics(LauncherPlatform* p) {
 }
 
 void launcher_platform_present(LauncherPlatform* p) {
+#if defined(LNG_SDL_RENDERER)
+    if (p && p->renderer) SDL_RenderPresent((SDL_Renderer*)p->renderer);
+#else
     if (p && p->window) SDL_GL_SwapWindow(p->window);
+#endif
 }
 
 void launcher_platform_close(LauncherPlatform* p) {
     if (!p) return;
+#if defined(LNG_SDL_RENDERER)
+    if (p->renderer) {
+        SDL_DestroyRenderer((SDL_Renderer*)p->renderer);
+        p->renderer = NULL; p->renderer_name = NULL; s_renderer = NULL;
+    }
+#endif
     if (p->gl)     { SDL_GL_DestroyContext(p->gl); p->gl = NULL; }
     if (p->window) { SDL_DestroyWindow(p->window); p->window = NULL; }
     /* Soft-return rematch hosts that skip SDL_Quit (s_quit_sdl=false) keep the

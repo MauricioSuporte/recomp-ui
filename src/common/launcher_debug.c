@@ -2,6 +2,7 @@
 
 #include "launcher_debug.h"
 #include "launcher_sdlcompat.h"   // SDL2/SDL3 event-symbol shim + GL header
+#include "launcher_platform.h"
 
 // A host that already compiles the stb_image_write implementation (e.g.
 // gb-recompiled's gb_printer.c) defines RECOMP_UI_HOST_STB_WRITE so this TU
@@ -49,6 +50,31 @@ bool launcher_capture_png(const char* path, int w, int h) {
     unsigned char* px = (unsigned char*)malloc((size_t)w * h * 4);
     if (!px) return false;
 
+#if defined(LNG_SDL_RENDERER)
+    /* SDL_Renderer launcher: read the back buffer before the present, top-down
+     * already; convert to RGBA32 and skip the GL flip below. */
+    {
+        SDL_Renderer* r = (SDL_Renderer*)launcher_platform_active_renderer();
+        SDL_Surface* shot = r ? SDL_RenderReadPixels(r, NULL) : NULL;
+        SDL_Surface* rgba = shot ? SDL_ConvertSurface(shot, SDL_PIXELFORMAT_RGBA32) : NULL;
+        if (shot) SDL_DestroySurface(shot);
+        if (!rgba) { free(px); fprintf(stderr, "[dbg] shot FAILED -> %s\n", path); return false; }
+        if (rgba->w < w) w = rgba->w;
+        if (rgba->h < h) h = rgba->h;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const unsigned char* s = (const unsigned char*)rgba->pixels + (size_t)y * rgba->pitch + (size_t)x * 4;
+                unsigned char* d = px + ((size_t)y * w + x) * 3;
+                d[0] = s[0]; d[1] = s[1]; d[2] = s[2];
+            }
+        SDL_DestroySurface(rgba);
+        int ok = stbi_write_png(path, w, h, 3, px, w * 3);
+        free(px);
+        if (ok) fprintf(stderr, "[dbg] shot -> %s (%dx%d)\n", path, w, h);
+        else    fprintf(stderr, "[dbg] shot FAILED -> %s\n", path);
+        return ok != 0;
+    }
+#endif
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     // RGBA/UNSIGNED_BYTE is portable to GLES default framebuffers; RGB reads
     // can fail with GL_INVALID_OPERATION on ANGLE. Keep the saved PNG RGB.

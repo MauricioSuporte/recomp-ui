@@ -509,3 +509,6 @@ void launcher_platform_close(LauncherPlatform* p) {
     if (s_quit_sdl)
         SDL_Quit();
 }
+
+/* SDL2 launchers always draw through OpenGL. */
+void* launcher_platform_active_renderer(void) { return NULL; }

@@ -16,8 +16,9 @@ extern "C" {
 #endif
 
 typedef struct {
-    unsigned int id;   // GL texture name (0 = not loaded)
+    unsigned int id;   // GL texture name (0 = not loaded; 1 with `handle`)
     int          w, h;
+    void*        handle; // SDL_Texture* in LNG_SDL_RENDERER builds, else NULL
 } LauncherTexture;
 
 // Load an image file into a freshly created GL texture (linear filtered,

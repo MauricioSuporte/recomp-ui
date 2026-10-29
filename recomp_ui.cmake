@@ -53,6 +53,13 @@ else()
         OFF)
 endif()
 
+# SDL3 only: render the launcher through SDL_Renderer (imgui_impl_sdlrenderer3)
+# instead of an OpenGL context. On Windows the renderer asks for "direct3d11"
+# first; LNG_RENDER_DRIVER overrides the driver at run time.
+option(RECOMP_UI_SDL_RENDERER
+    "Render the launcher with SDL_Renderer (Direct3D 11 on Windows) instead of OpenGL"
+    OFF)
+
 set(RUI_SRC    ${RECOMP_UI_ROOT}/src)
 set(RUI_IMGUI  ${RUI_SRC}/third_party/imgui)
 
@@ -182,6 +189,10 @@ function(recomp_target_launcher_ui TGT)
             ${RUI_IMGUI}/imgui_widgets.cpp
             ${_rui_imgui_platform_backend}
             ${RUI_IMGUI}/backends/imgui_impl_opengl3.cpp)
+        if(RECOMP_UI_SDL3 AND RECOMP_UI_SDL_RENDERER)
+            list(APPEND _rui_imgui_sources
+                ${RUI_IMGUI}/backends/imgui_impl_sdlrenderer3.cpp)
+        endif()
     endif()
 
     target_sources(${TGT} PRIVATE
@@ -275,6 +286,10 @@ function(recomp_target_launcher_ui TGT)
     if(RECOMP_UI_SDL3)
         target_compile_definitions(${TGT} PRIVATE LNG_SDL3=1)
         message(STATUS "recomp-ui: SDL3 platform backend")
+        if(RECOMP_UI_SDL_RENDERER)
+            target_compile_definitions(${TGT} PRIVATE LNG_SDL_RENDERER=1)
+            message(STATUS "recomp-ui: SDL_Renderer launcher (Direct3D 11 on Windows)")
+        endif()
     else()
         message(STATUS "recomp-ui: SDL2 compatibility platform backend")
     endif()

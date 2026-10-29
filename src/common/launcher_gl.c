@@ -3,6 +3,7 @@
 #include "launcher_gl.h"
 
 #include "launcher_sdlcompat.h"   // GL header for the active SDL version
+#include "launcher_platform.h"    // launcher_platform_active_renderer()
 
 #include <stdio.h>
 #include <string.h>
@@ -40,7 +41,7 @@ void launcher_image_free(unsigned char* pixels) {
 
 // Shared upload path. `colorkey_tol` < 0 disables color-keying.
 static LauncherTexture load_impl(const char* path, int colorkey_tol) {
-    LauncherTexture t = { 0, 0, 0 };
+    LauncherTexture t = { 0, 0, 0, NULL };
     int w = 0, h = 0, comp = 0;
     unsigned char* pixels = stbi_load(path, &w, &h, &comp, 4); // force RGBA
     if (!pixels) return t;
@@ -57,6 +58,26 @@ static LauncherTexture load_impl(const char* path, int colorkey_tol) {
         }
     }
 
+#if defined(LNG_SDL_RENDERER)
+    /* SDL_Renderer launcher (Direct3D 11 on Windows): no GL context exists. */
+    {
+        SDL_Renderer* r = (SDL_Renderer*)launcher_platform_active_renderer();
+        SDL_Texture* tex = r ? SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA32,
+                                                 SDL_TEXTUREACCESS_STATIC, w, h)
+                             : NULL;
+        if (tex && SDL_UpdateTexture(tex, NULL, pixels, w * 4)) {
+            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_LINEAR);
+            t.handle = tex;
+            t.id = 1;
+            t.w = w; t.h = h;
+        } else if (tex) {
+            SDL_DestroyTexture(tex);
+        }
+        stbi_image_free(pixels);
+        return t;
+    }
+#endif
     GLuint tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -83,6 +104,14 @@ LauncherTexture launcher_texture_load_colorkey(const char* path, int tolerance) 
 }
 
 void launcher_texture_free(LauncherTexture* t) {
+#if defined(LNG_SDL_RENDERER)
+    if (t && t->handle) {
+        SDL_DestroyTexture((SDL_Texture*)t->handle);
+        t->handle = NULL;
+        t->id = 0;
+    }
+    return;
+#endif
     if (t && t->id) {
         GLuint id = (GLuint)t->id;
         glDeleteTextures(1, &id);
@@ -92,6 +121,11 @@ void launcher_texture_free(LauncherTexture* t) {
 
 bool launcher_gl_context_version(int* major, int* minor,
                                  char* out_version, size_t out_version_len) {
+#if defined(LNG_SDL_RENDERER)
+    (void)major; (void)minor;
+    if (out_version && out_version_len) snprintf(out_version, out_version_len, "(SDL_Renderer)");
+    return false;
+#endif
     const char* version = (const char*)glGetString(GL_VERSION);
     if (out_version && out_version_len)
         snprintf(out_version, out_version_len, "%s", version ? version : "(null)");
