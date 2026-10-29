@@ -296,6 +296,8 @@ typedef struct {
     const char* fmv_timing_busy_status;  // borrowed; NULL => "Applying FMV timing…"
     const char* fmv_timing_success_status; // borrowed; NULL => "FMV timing applied."
     bool        prepare_use_selected_rom; // button uses current ROM (no 2nd picker)
+    bool        prepare_autostart;        // start prepare once, without a click
+    bool        prepare_autostart_done;   // the one automatic start happened
     bool        rebuild_after_prepare;
     bool        relaunch_after_rebuild;
     bool        prepare_required_before_continue;

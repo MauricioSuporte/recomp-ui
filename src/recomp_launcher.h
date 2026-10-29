@@ -2489,11 +2489,22 @@ typedef struct RecompLauncherCGameInfo {
      * Appended for ABI stability; NULL keeps absolute sidecars. */
     int (*portable_path)(const char* path, char* out, size_t out_cap);
     int (*resolve_stored_path)(const char* stored, char* out, size_t out_cap);
+
+    /* ---- Prepare autostart (RECOMP_LAUNCHER_HAS_PREPARE_AUTOSTART) --------
+     * When 1, the setup wizard starts the prepare job (Generate & rebuild on
+     * local codegen hosts) by itself, once per launcher session, as soon as
+     * the button would be enabled: prepare_use_selected_rom set and a verified
+     * ROM already selected. For an install that was just updated over an
+     * older build, where pressing the button is the only sensible next step.
+     * A failed or cancelled job is not retried automatically. Appended for
+     * ABI stability; 0 keeps the button manual. */
+    int prepare_autostart;
 } RecompLauncherCGameInfo;
 
 #define RECOMP_LAUNCHER_HAS_EXTERNAL_JOIN 1
 #define RECOMP_LAUNCHER_HAS_ROOM_INVITE 1
 #define RECOMP_LAUNCHER_HAS_PORTABLE_PATHS 1
+#define RECOMP_LAUNCHER_HAS_PREPARE_AUTOSTART 1
 
 /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */
 #define RECOMP_LAUNCHER_HAS_TEXTURE_FILTER_CATALOG 1

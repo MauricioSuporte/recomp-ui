@@ -13908,6 +13908,13 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         const bool can_prep_selected = use_selected && m->rom_present &&
                                        m->rom_full[0] &&
                                        strcmp(m->rom_size, "--") != 0;
+        /* An install updated over an older build: the only next step is
+         * this button, so press it once on the player's behalf. */
+        if (m->prepare_autostart && !m->prepare_autostart_done &&
+            use_selected && can_prep_selected && !m->setup_preparing) {
+            m->prepare_autostart_done = true;
+            launcher_model_start_prepare_disc(m, m->rom_full);
+        }
         if (use_selected && !can_prep_selected) ImGui::BeginDisabled();
         if (ImGui::Button(prep_lbl, ImVec2(px(240), px(32)))) {
             if (use_selected) {

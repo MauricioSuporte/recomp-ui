@@ -532,6 +532,7 @@ void launcher_model_init(LauncherModel* m,
             m->rebuild_busy_status  = game->rebuild_busy_status;
             m->rebuild_success_status = game->rebuild_success_status;
             m->prepare_use_selected_rom = game->prepare_use_selected_rom != 0;
+            m->prepare_autostart = game->prepare_autostart != 0;
             m->rebuild_after_prepare = game->rebuild_after_prepare != 0;
             m->relaunch_after_rebuild = game->relaunch_after_rebuild != 0;
             m->prepare_required_before_continue =
@@ -559,6 +560,7 @@ void launcher_model_init(LauncherModel* m,
             m->rebuild_busy_status = NULL;
             m->rebuild_success_status = NULL;
             m->prepare_use_selected_rom = false;
+            m->prepare_autostart = false;
             m->rebuild_after_prepare = false;
             m->relaunch_after_rebuild = false;
             m->prepare_required_before_continue = false;
