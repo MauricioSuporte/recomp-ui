@@ -736,7 +736,7 @@ static void case_mod_set_plan_plus_options(void)
     char text[4096];
     size_t o = 0;
     int i;
-    printf("  mod set: 16 packages published as plan + options\n");
+    printf("  mod set: 16 packages published in compact form\n");
     memset(&caps, 0, sizeof(caps));
     caps.valid = 1;
     caps.mod_count = 16;
@@ -744,17 +744,24 @@ static void case_mod_set_plan_plus_options(void)
         snprintf(caps.mods[i].id, sizeof(caps.mods[i].id),
                  "superbomberman5.package-number-%02d", i);
         snprintf(caps.mods[i].ver, sizeof(caps.mods[i].ver), "0.1.0");
-        snprintf(caps.mods[i].feats, sizeof(caps.mods[i].feats), "feature_%02d", i);
+        /* Package 5 lists an exempt feature the effective set leaves out. */
+        snprintf(caps.mods[i].feats, sizeof(caps.mods[i].feats),
+                 i == 5 ? "feature_%02d,cosmetic" : "feature_%02d", i);
+    }
+    /* Effective set order differs from the plan order. */
+    for (i = 15; i >= 0; --i)
         o += (size_t)snprintf(text + o, sizeof(text) - o, "%s@0.1.0/feature_%02d%s\n",
                               caps.mods[i].id, i,
                               i == 0 ? " stage=snow variant=2" : "");
-    }
-    ck(!encode_mod_set(text, caps.mod_set, sizeof(caps.mod_set), 0),
+    ck(!encode_mod_set(text, caps.mod_set, sizeof(caps.mod_set), NULL),
        "the full set does not fit the wire field");
-    ck(encode_mod_set(text, caps.mod_set, sizeof(caps.mod_set), 1) &&
-       caps.mod_set[0] == '~', "plan + options fits");
+    ck(encode_mod_set(text, caps.mod_set, sizeof(caps.mod_set), &caps) &&
+       caps.mod_set[0] == '~', "compact form fits");
     ck(room_want_set(&caps, want, sizeof(want)) == 1 && strcmp(want, text) == 0,
-       "guest rebuilds the exact set, options included");
+       "peers expand it to the exact set: order, options, no exempt feature");
+    snprintf(caps.mod_set, sizeof(caps.mod_set), "~99/x");
+    ck(room_want_set(&caps, want, sizeof(want)) == ROOM_SET_UNREADABLE,
+       "a bad row index is unreadable, never adopted");
 }
 
 int main(void)

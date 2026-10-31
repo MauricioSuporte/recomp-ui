@@ -447,26 +447,52 @@ static void host_caps_watch_step(void);
  * equality check -- a package can be present and still be configured
  * differently. Two grains, two questions.
  */
-/* Encode the runtime's newline set into the wire's ';' form. With options_only,
- * keep just the lines carrying options (" key=value") behind a leading '~'.
- * Returns 1 when the whole result fit; on 0, out is empty. */
+/* Encode the runtime's newline set into the wire's ';' form. With plan set,
+ * write the compact form instead: a leading '~', then each line with its
+ * "<package>@<version>" replaced by the package's index in the plan rows
+ * ("3/feature k=v"). The guest expands it back to the exact text, so features
+ * the plan lists but the set omits (exempt ones), the set's own order and
+ * option values all survive. Returns 1 when everything fit; on 0, out is
+ * empty. */
 static int encode_mod_set(const char *text, char *out, size_t cap,
-                          int options_only)
+                          const RNetLobbyMatchCaps *plan)
 {
   size_t o = 0;
   const char *line = text;
   if (!out || cap < 2) return 0;
   out[0] = '\0';
-  if (options_only) out[o++] = '~';
+  if (plan) out[o++] = '~';
   while (line && *line) {
     const char *end = strchr(line, '\n');
     size_t len = end ? (size_t)(end - line) : strlen(line);
-    if (len && (!options_only || memchr(line, ' ', len))) {
-      const int sep = o > (size_t)(options_only ? 1 : 0);
-      if (o + (size_t)sep + len + 1 > cap) { out[0] = '\0'; return 0; }
+    if (len) {
+      char idx[8];
+      const char *body = line;
+      size_t blen = len;
+      size_t ilen = 0;
+      const int sep = o > (size_t)(plan ? 1 : 0);
+      if (plan) {
+        const char *slash = memchr(line, '/', len);
+        int i, found = -1;
+        if (!slash) { out[0] = '\0'; return 0; }
+        for (i = 0; i < plan->mod_count; ++i) {
+          char head[RNET_LOBBY_MOD_ID_LEN + 64];
+          int hl = snprintf(head, sizeof(head), "%s@%s", plan->mods[i].id,
+                            plan->mods[i].ver);
+          if (hl > 0 && (size_t)hl == (size_t)(slash - line) &&
+              !memcmp(head, line, (size_t)hl)) { found = i; break; }
+        }
+        if (found < 0) { out[0] = '\0'; return 0; }
+        ilen = (size_t)snprintf(idx, sizeof(idx), "%d", found);
+        body = slash;
+        blen = len - (size_t)(slash - line);
+      }
+      if (o + (size_t)sep + ilen + blen + 1 > cap) { out[0] = '\0'; return 0; }
       if (sep) out[o++] = ';';
-      memcpy(out + o, line, len);
-      o += len;
+      memcpy(out + o, idx, ilen);
+      o += ilen;
+      memcpy(out + o, body, blen);
+      o += blen;
     }
     line = end ? end + 1 : NULL;
   }
@@ -520,15 +546,14 @@ static void fill_caps_mods(RNetLobbyMatchCaps *caps)
     const int need = g_mods->effective_set(g_mods->ctx, text,
                                            (uint32_t)sizeof(text));
     if (need > 0 && need < (int)sizeof(text) && strcmp(text, "(none)\n") != 0) {
-      if (!encode_mod_set(text, caps->mod_set, sizeof(caps->mod_set), 0)) {
-        /* The whole set does not fit (16 packages run past 512 bytes). The
-         * plan already names every package, version and enabled feature, so
-         * publish only what the plan cannot carry: the lines with options,
-         * marked '~' so a guest rebuilds the rest from the plan. Publishing
-         * nothing left guests rebuilding a set WITHOUT the options, which
-         * never equals the host's and refused every launch. */
-        if (encode_mod_set(text, caps->mod_set, sizeof(caps->mod_set), 1)) {
-          fprintf(stderr, "netplay: mod set published as plan + options "
+      if (!encode_mod_set(text, caps->mod_set, sizeof(caps->mod_set), NULL)) {
+        /* The whole set does not fit (16 packages run past 512 bytes):
+         * publish it with each package named by its plan row ('~' form).
+         * Publishing nothing made peers rebuild the set from the plan, which
+         * lists exempt features and no options, so it never equalled the
+         * host's set -- not even on the host -- and every launch failed. */
+        if (encode_mod_set(text, caps->mod_set, sizeof(caps->mod_set), caps)) {
+          fprintf(stderr, "netplay: mod set published in compact form "
                           "(full text too long)\n");
         } else {
           /* Publishing a PREFIX would be worse than publishing nothing: a
@@ -3338,29 +3363,6 @@ static void host_caps_watch_step(void)
  * Returns 1 with the set in want, 0 when there is nothing to compare (no valid
  * caps), and -1 when the host's set is known to exist but cannot be read here
  * (a LAN room whose plan did not fit): the caller must not launch on it. */
-/* In a '~' mod_set (plan + options), the options text (" k=v ...") the host
- * published for pkg@ver/feature, or NULL when that feature has none. */
-static const char *plan_line_options(const char *mod_set, const char *id,
-                                     const char *ver, const char *feat,
-                                     size_t flen)
-{
-  const char *p;
-  char head[RNET_LOBBY_MOD_ID_LEN + 256];
-  size_t hl;
-  if (!mod_set || mod_set[0] != '~') return NULL;
-  if (snprintf(head, sizeof(head), "%s@%s/%.*s", id, ver, (int)flen, feat) >=
-      (int)sizeof(head))
-    return NULL;
-  hl = strlen(head);
-  for (p = mod_set + 1; *p;) {
-    if (!strncmp(p, head, hl) && p[hl] == ' ') return p + hl;
-    p = strchr(p, ';');
-    if (!p) break;
-    ++p;
-  }
-  return NULL;
-}
-
 #define ROOM_SET_UNREADABLE (-1)
 static int room_want_set(const RNetLobbyMatchCaps *caps, char *want, size_t cap)
 {
@@ -3377,7 +3379,30 @@ static int room_want_set(const RNetLobbyMatchCaps *caps, char *want, size_t cap)
     snprintf(want, cap, "(none)\n");
     return 1;
   }
-  if (caps->mod_set[0] && caps->mod_set[0] != '~') {
+  if (caps->mod_set[0] == '~') {
+    /* Compact form: "<plan row>/<feature> <options>" per ';' entry. */
+    const char *p = caps->mod_set + 1;
+    while (*p) {
+      size_t len = strcspn(p, ";");
+      char *endp = NULL;
+      long idx = strtol(p, &endp, 10);
+      int n;
+      if (endp == p || idx < 0 || idx >= caps->mod_count || *endp != '/' ||
+          endp > p + len) {
+        want[0] = '\0';
+        return ROOM_SET_UNREADABLE;
+      }
+      n = snprintf(want + o, cap - o, "%s@%s%.*s\n", caps->mods[idx].id,
+                   caps->mods[idx].ver, (int)(len - (size_t)(endp - p)), endp);
+      if (n < 0 || (size_t)n >= cap - o) { want[0] = '\0'; return ROOM_SET_UNREADABLE; }
+      o += (size_t)n;
+      p += len;
+      if (*p == ';') ++p;
+    }
+    if (o == 0) snprintf(want, cap, "(none)\n");
+    return 1;
+  }
+  if (caps->mod_set[0]) {
     size_t k;
     for (k = 0; caps->mod_set[k] && o + 2 < cap; ++k)
       want[o++] = caps->mod_set[k] == ';' ? '\n' : caps->mod_set[k];
@@ -3392,12 +3417,8 @@ static int room_want_set(const RNetLobbyMatchCaps *caps, char *want, size_t cap)
       size_t len = e ? (size_t)(e - f) : strlen(f);
       int n;
       if (len) {
-        const char *opt = plan_line_options(caps->mod_set, caps->mods[i].id,
-                                            caps->mods[i].ver, f, len);
-        size_t optlen = opt ? strcspn(opt, ";") : 0;
-        n = snprintf(want + o, cap - o, "%s@%s/%.*s%.*s\n", caps->mods[i].id,
-                     caps->mods[i].ver, (int)len, f, (int)optlen,
-                     opt ? opt : "");
+        n = snprintf(want + o, cap - o, "%s@%s/%.*s\n", caps->mods[i].id,
+                     caps->mods[i].ver, (int)len, f);
         if (n < 0 || (size_t)n >= cap - o) { want[0] = '\0'; return 0; }
         o += (size_t)n;
       }
