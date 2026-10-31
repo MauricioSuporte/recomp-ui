@@ -482,10 +482,13 @@ static int encode_mod_set(const char *text, char *out, size_t cap,
           if (hl > 0 && (size_t)hl == (size_t)(slash - line) &&
               !memcmp(head, line, (size_t)hl)) { found = i; break; }
         }
-        if (found < 0) { out[0] = '\0'; return 0; }
-        ilen = (size_t)snprintf(idx, sizeof(idx), "%d", found);
-        body = slash;
-        blen = len - (size_t)(slash - line);
+        if (found >= 0) {
+          ilen = (size_t)snprintf(idx, sizeof(idx), "%d", found);
+          body = slash;
+          blen = len - (size_t)(slash - line);
+        }
+        /* else: a package the plan could not hold (it caps at
+         * RNET_LOBBY_MAX_MODS rows) keeps its full "id@ver/..." line. */
       }
       if (o + (size_t)sep + ilen + blen + 1 > cap) { out[0] = '\0'; return 0; }
       if (sep) out[o++] = ';';
@@ -540,6 +543,10 @@ static void fill_caps_mods(RNetLobbyMatchCaps *caps)
     dst->feats[sizeof(dst->feats) - 1] = '\0';
   }
   caps->mod_count = n;
+  if (n >= RNET_LOBBY_MAX_MODS)
+    fprintf(stderr, "netplay: mod plan holds at most %d packages; any enabled "
+                    "beyond that are carried only by the mod set\n",
+            RNET_LOBBY_MAX_MODS);
   /* The exact configuration, not just the package list. */
   if (g_mods->effective_set) {
     char text[4096];
@@ -554,13 +561,16 @@ static void fill_caps_mods(RNetLobbyMatchCaps *caps)
          * host's set -- not even on the host -- and every launch failed. */
         if (encode_mod_set(text, caps->mod_set, sizeof(caps->mod_set), caps)) {
           fprintf(stderr, "netplay: mod set published in compact form "
-                          "(full text too long)\n");
+                          "(%d bytes full, %u compact): %s\n", need,
+                  (unsigned)strlen(caps->mod_set), caps->mod_set);
         } else {
           /* Publishing a PREFIX would be worse than publishing nothing: a
            * guest would adopt a partial configuration and believe it matched. */
           caps->mod_set[0] = '\0';
-          fprintf(stderr, "netplay: mod set too long to publish; guests will be "
-                          "asked to match it at launch instead\n");
+          fprintf(stderr, "netplay: mod set too long to publish (%d bytes, "
+                          "compact form also over %u); guests will be asked to "
+                          "match it at launch instead. Set:\n%s", need,
+                  (unsigned)sizeof(caps->mod_set) - 1, text);
         }
       }
     }
@@ -3387,13 +3397,17 @@ static int room_want_set(const RNetLobbyMatchCaps *caps, char *want, size_t cap)
       char *endp = NULL;
       long idx = strtol(p, &endp, 10);
       int n;
-      if (endp == p || idx < 0 || idx >= caps->mod_count || *endp != '/' ||
-          endp > p + len) {
-        want[0] = '\0';
-        return ROOM_SET_UNREADABLE;
+      if (endp != p && *endp == '/' && endp < p + len) {
+        if (idx < 0 || idx >= caps->mod_count) {
+          want[0] = '\0';
+          return ROOM_SET_UNREADABLE;
+        }
+        n = snprintf(want + o, cap - o, "%s@%s%.*s\n", caps->mods[idx].id,
+                     caps->mods[idx].ver, (int)(len - (size_t)(endp - p)), endp);
+      } else {
+        /* Full line: a package beyond the plan's row limit. */
+        n = snprintf(want + o, cap - o, "%.*s\n", (int)len, p);
       }
-      n = snprintf(want + o, cap - o, "%s@%s%.*s\n", caps->mods[idx].id,
-                   caps->mods[idx].ver, (int)(len - (size_t)(endp - p)), endp);
       if (n < 0 || (size_t)n >= cap - o) { want[0] = '\0'; return ROOM_SET_UNREADABLE; }
       o += (size_t)n;
       p += len;
@@ -3501,6 +3515,32 @@ static void mod_set_sync_step(void)
     (void)rnet_lobby_set_ready(1); /* what we announce changed with the set */
 }
 
+/* Say why a launch was refused for mods: the room's raw field, the set it
+ * expands to and this peer's own set, once per distinct situation. */
+static void log_mod_mismatch(const RNetLobbyMatchCaps *caps, const char *want,
+                             const char *reason)
+{
+  static char said[1024];
+  char key[1024];
+  char mine[4096];
+  snprintf(key, sizeof(key), "%s|%s", caps ? caps->mod_set : "",
+           reason ? reason : "");
+  if (!strcmp(key, said)) return;
+  snprintf(said, sizeof(said), "%s", key);
+  mine[0] = '\0';
+  if (g_mods && g_mods->effective_set)
+    (void)g_mods->effective_set(g_mods->ctx, mine, (uint32_t)sizeof(mine));
+  fprintf(stderr, "netplay: mod_set_mismatch (%s, %s): %s\n",
+          rnet_lobby_is_host() ? "host" : "guest",
+          g_hosting_lan || g_joined_lan ? "lan" : "online",
+          reason && reason[0] ? reason : "(no reason)");
+  fprintf(stderr, "netplay:   room mod_set field (%u bytes, %d plan rows): %s\n",
+          caps ? (unsigned)strlen(caps->mod_set) : 0u,
+          caps ? caps->mod_count : 0, caps ? caps->mod_set : "");
+  fprintf(stderr, "netplay:   room set expands to:\n%s", want ? want : "(unreadable)\n");
+  fprintf(stderr, "netplay:   this peer's set:\n%s", mine[0] ? mine : "(none)\n");
+}
+
 /* Failed adoption must not launch an old local plan, including in delay mode
  * where no rollback mod-set handshake can catch the mismatch afterwards. */
 static int room_mods_ready(void)
@@ -3511,6 +3551,7 @@ static int room_mods_ready(void)
   if (!caps || !caps->valid) return 1;
   got = room_want_set(caps, want, sizeof(want));
   if (got == ROOM_SET_UNREADABLE) {
+    log_mod_mismatch(caps, NULL, "the room's mod set could not be read");
     snprintf(g_runtime_error, sizeof(g_runtime_error), "mod_set_mismatch");
     return 0;
   }
@@ -3522,6 +3563,7 @@ static int room_mods_ready(void)
     return 0;
   }
   if (g_mods->check_set(g_mods->ctx, want, reason, sizeof(reason)) == 0) return 1;
+  log_mod_mismatch(caps, want, reason);
   snprintf(g_runtime_error, sizeof(g_runtime_error), "mod_set_mismatch");
   return 0;
 }

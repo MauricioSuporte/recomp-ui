@@ -759,6 +759,13 @@ static void case_mod_set_plan_plus_options(void)
        caps.mod_set[0] == '~', "compact form fits");
     ck(room_want_set(&caps, want, sizeof(want)) == 1 && strcmp(want, text) == 0,
        "peers expand it to the exact set: order, options, no exempt feature");
+    /* A 17th package the plan cannot hold travels as a full line. */
+    o += (size_t)snprintf(text + o, sizeof(text) - o,
+                          "superbomberman5.selection-colors@0.1.0/color_controls\n");
+    ck(encode_mod_set(text, caps.mod_set, sizeof(caps.mod_set), &caps),
+       "17 packages: compact form still fits");
+    ck(room_want_set(&caps, want, sizeof(want)) == 1 && strcmp(want, text) == 0,
+       "the package beyond the plan survives the round trip");
     snprintf(caps.mod_set, sizeof(caps.mod_set), "~99/x");
     ck(room_want_set(&caps, want, sizeof(want)) == ROOM_SET_UNREADABLE,
        "a bad row index is unreadable, never adopted");
