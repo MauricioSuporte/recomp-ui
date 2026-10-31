@@ -659,11 +659,75 @@ static int linux_pick_folder(const char* title, char* out, size_t out_cap) {
 }
 #endif /* __linux__ */
 
+#if defined(__ANDROID__)
+/* Android: the host's Activity imports a file through the Storage Access
+ * Framework. The launcher calls `String recompPickFile(String title)` on it
+ * (JNI, from the SDL main thread, which may block while the system picker is
+ * open); the Activity copies the chosen document into its own files folder
+ * and returns that path, or null on cancel. A host without the method keeps
+ * the built-in browser (-1). */
+#include <jni.h>
+#include <SDL.h>   /* SDL2 Android build: SDL_AndroidGetJNIEnv/GetActivity */
+
+static jmethodID android_picker_method(JNIEnv* env, jobject activity) {
+    jclass cls = (*env)->GetObjectClass(env, activity);
+    jmethodID m = cls ? (*env)->GetMethodID(env, cls, "recompPickFile",
+                                            "(Ljava/lang/String;)Ljava/lang/String;")
+                      : NULL;
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        m = NULL;
+    }
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    return m;
+}
+
+static int android_pick_file(const char* title, char* out, size_t cap) {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    jobject activity = env ? (jobject)SDL_AndroidGetActivity() : NULL;
+    int result = -1;
+    if (!env || !activity) return -1;
+    jmethodID m = android_picker_method(env, activity);
+    if (m) {
+        jstring jt = (*env)->NewStringUTF(env, title ? title : "Select file");
+        jstring r = (jstring)(*env)->CallObjectMethod(env, activity, m, jt);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            r = NULL;
+            result = -1;
+        } else if (!r) {
+            result = 0;   /* cancelled */
+        } else {
+            const char* path = (*env)->GetStringUTFChars(env, r, NULL);
+            if (path && path[0]) {
+                snprintf(out, cap, "%s", path);
+                result = 1;
+            } else {
+                result = 0;
+            }
+            if (path) (*env)->ReleaseStringUTFChars(env, r, path);
+            (*env)->DeleteLocalRef(env, r);
+        }
+        if (jt) (*env)->DeleteLocalRef(env, jt);
+    }
+    (*env)->DeleteLocalRef(env, activity);
+    return result;
+}
+
+static bool android_picker_available(void) {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    jobject activity = env ? (jobject)SDL_AndroidGetActivity() : NULL;
+    bool ok = activity && android_picker_method(env, activity) != NULL;
+    if (activity) (*env)->DeleteLocalRef(env, activity);
+    return ok;
+}
+#endif
+
 bool launcher_native_file_picker_available(void) {
 #if defined(__ANDROID__)
-    /* Android hosts import external files through SAF. The shared launcher
-     * browses the imported files in-app; desktop helpers are unavailable. */
-    return false;
+    /* Android hosts import external files through SAF when their Activity
+     * implements recompPickFile; otherwise the built-in browser is used. */
+    return android_picker_available();
 #elif defined(__linux__)
     return linux_have_cmd("zenity") || linux_have_cmd("kdialog");
 #else
@@ -676,7 +740,7 @@ bool launcher_pick_rom(char* out_path, size_t out_cap) {
     out_path[0] = '\0';
 
 #if defined(__ANDROID__)
-    return false;
+    return android_pick_file("Select game file", out_path, out_cap) == 1;
 #elif defined(__linux__)
     {
         const int r = linux_pick_open("Select game file", NULL, 0, NULL,
@@ -732,8 +796,8 @@ int launcher_try_pick_file(const char* title, const char* const* patterns,
     out_path[0] = '\0';
 
 #if defined(__ANDROID__)
-    (void)title; (void)patterns; (void)num_patterns; (void)desc;
-    return -1;
+    (void)patterns; (void)num_patterns; (void)desc;
+    return android_pick_file(title, out_path, out_cap);
 #elif defined(__linux__)
     {
         const int r = linux_pick_open(title, patterns, num_patterns, desc,

@@ -472,6 +472,18 @@ void launcher_platform_refresh_metrics(LauncherPlatform* p) {
 #endif
     }
     if (s <= 0.0f) s = 1.0f;
+#if defined(__ANDROID__)
+    /* A phone reports ~400 dpi, i.e. 4x, which leaves ~600x270 points: the
+     * launcher's layout needs about 980x600 and came out clipped. Keep the
+     * density but never shrink the logical canvas below that. */
+    if (p->pixel_w > 0 && p->pixel_h > 0) {
+        const float fit_w = (float)p->pixel_w / 980.0f;
+        const float fit_h = (float)p->pixel_h / 600.0f;
+        const float fit = fit_w < fit_h ? fit_w : fit_h;
+        if (s > fit) s = fit;
+        if (s < 1.0f) s = 1.0f;
+    }
+#endif
     forced = forced_display_scale();
     if (forced > 0.0f) s = forced;
 
