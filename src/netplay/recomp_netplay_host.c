@@ -447,6 +447,33 @@ static void host_caps_watch_step(void);
  * equality check -- a package can be present and still be configured
  * differently. Two grains, two questions.
  */
+/* Encode the runtime's newline set into the wire's ';' form. With options_only,
+ * keep just the lines carrying options (" key=value") behind a leading '~'.
+ * Returns 1 when the whole result fit; on 0, out is empty. */
+static int encode_mod_set(const char *text, char *out, size_t cap,
+                          int options_only)
+{
+  size_t o = 0;
+  const char *line = text;
+  if (!out || cap < 2) return 0;
+  out[0] = '\0';
+  if (options_only) out[o++] = '~';
+  while (line && *line) {
+    const char *end = strchr(line, '\n');
+    size_t len = end ? (size_t)(end - line) : strlen(line);
+    if (len && (!options_only || memchr(line, ' ', len))) {
+      const int sep = o > (size_t)(options_only ? 1 : 0);
+      if (o + (size_t)sep + len + 1 > cap) { out[0] = '\0'; return 0; }
+      if (sep) out[o++] = ';';
+      memcpy(out + o, line, len);
+      o += len;
+    }
+    line = end ? end + 1 : NULL;
+  }
+  out[o] = '\0';
+  return 1;
+}
+
 static void fill_caps_mods(RNetLobbyMatchCaps *caps)
 {
   int n;
@@ -489,28 +516,27 @@ static void fill_caps_mods(RNetLobbyMatchCaps *caps)
   caps->mod_count = n;
   /* The exact configuration, not just the package list. */
   if (g_mods->effective_set) {
-    char text[1024];
+    char text[4096];
     const int need = g_mods->effective_set(g_mods->ctx, text,
                                            (uint32_t)sizeof(text));
     if (need > 0 && need < (int)sizeof(text) && strcmp(text, "(none)\n") != 0) {
-      size_t o = 0;
-      size_t k;
-      for (k = 0; text[k] && o + 1 < sizeof(caps->mod_set); ++k) {
-        char c = text[k];
-        if (c == '\n') {
-          if (o == 0 || caps->mod_set[o - 1] == ';') continue;
-          c = ';';
+      if (!encode_mod_set(text, caps->mod_set, sizeof(caps->mod_set), 0)) {
+        /* The whole set does not fit (16 packages run past 512 bytes). The
+         * plan already names every package, version and enabled feature, so
+         * publish only what the plan cannot carry: the lines with options,
+         * marked '~' so a guest rebuilds the rest from the plan. Publishing
+         * nothing left guests rebuilding a set WITHOUT the options, which
+         * never equals the host's and refused every launch. */
+        if (encode_mod_set(text, caps->mod_set, sizeof(caps->mod_set), 1)) {
+          fprintf(stderr, "netplay: mod set published as plan + options "
+                          "(full text too long)\n");
+        } else {
+          /* Publishing a PREFIX would be worse than publishing nothing: a
+           * guest would adopt a partial configuration and believe it matched. */
+          caps->mod_set[0] = '\0';
+          fprintf(stderr, "netplay: mod set too long to publish; guests will be "
+                          "asked to match it at launch instead\n");
         }
-        caps->mod_set[o++] = c;
-      }
-      caps->mod_set[o] = '\0';
-      if (o && caps->mod_set[o - 1] == ';') caps->mod_set[o - 1] = '\0';
-      if (text[k] != '\0') {
-        /* Publishing a PREFIX would be worse than publishing nothing: a guest
-         * would adopt a partial configuration and believe it matched. */
-        caps->mod_set[0] = '\0';
-        fprintf(stderr, "netplay: mod set too long to publish; guests will be "
-                        "asked to match it at launch instead\n");
       }
     }
   }
@@ -3251,11 +3277,11 @@ static void dl_queue_step(void)
  * layer's job: any path that changes the effective set, present or future, is
  * covered by comparing the set itself. The comparison is against the canonical
  * text, so it fires on a real change and not on a redraw. */
-static char g_published_set[1024];
+static char g_published_set[4096];
 
 static void host_caps_watch_step(void)
 {
-  char text[1024];
+  char text[4096];
   int need;
 
   if (!g_mods || !g_mods->effective_set)
@@ -3312,6 +3338,29 @@ static void host_caps_watch_step(void)
  * Returns 1 with the set in want, 0 when there is nothing to compare (no valid
  * caps), and -1 when the host's set is known to exist but cannot be read here
  * (a LAN room whose plan did not fit): the caller must not launch on it. */
+/* In a '~' mod_set (plan + options), the options text (" k=v ...") the host
+ * published for pkg@ver/feature, or NULL when that feature has none. */
+static const char *plan_line_options(const char *mod_set, const char *id,
+                                     const char *ver, const char *feat,
+                                     size_t flen)
+{
+  const char *p;
+  char head[RNET_LOBBY_MOD_ID_LEN + 256];
+  size_t hl;
+  if (!mod_set || mod_set[0] != '~') return NULL;
+  if (snprintf(head, sizeof(head), "%s@%s/%.*s", id, ver, (int)flen, feat) >=
+      (int)sizeof(head))
+    return NULL;
+  hl = strlen(head);
+  for (p = mod_set + 1; *p;) {
+    if (!strncmp(p, head, hl) && p[hl] == ' ') return p + hl;
+    p = strchr(p, ';');
+    if (!p) break;
+    ++p;
+  }
+  return NULL;
+}
+
 #define ROOM_SET_UNREADABLE (-1)
 static int room_want_set(const RNetLobbyMatchCaps *caps, char *want, size_t cap)
 {
@@ -3328,7 +3377,7 @@ static int room_want_set(const RNetLobbyMatchCaps *caps, char *want, size_t cap)
     snprintf(want, cap, "(none)\n");
     return 1;
   }
-  if (caps->mod_set[0]) {
+  if (caps->mod_set[0] && caps->mod_set[0] != '~') {
     size_t k;
     for (k = 0; caps->mod_set[k] && o + 2 < cap; ++k)
       want[o++] = caps->mod_set[k] == ';' ? '\n' : caps->mod_set[k];
@@ -3343,8 +3392,12 @@ static int room_want_set(const RNetLobbyMatchCaps *caps, char *want, size_t cap)
       size_t len = e ? (size_t)(e - f) : strlen(f);
       int n;
       if (len) {
-        n = snprintf(want + o, cap - o, "%s@%s/%.*s\n", caps->mods[i].id,
-                     caps->mods[i].ver, (int)len, f);
+        const char *opt = plan_line_options(caps->mod_set, caps->mods[i].id,
+                                            caps->mods[i].ver, f, len);
+        size_t optlen = opt ? strcspn(opt, ";") : 0;
+        n = snprintf(want + o, cap - o, "%s@%s/%.*s%.*s\n", caps->mods[i].id,
+                     caps->mods[i].ver, (int)len, f, (int)optlen,
+                     opt ? opt : "");
         if (n < 0 || (size_t)n >= cap - o) { want[0] = '\0'; return 0; }
         o += (size_t)n;
       }

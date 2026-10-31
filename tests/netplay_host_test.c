@@ -729,8 +729,37 @@ static void case_mod_set_plan_only_and_unreadable(void)
     ck(room_want_set(&caps, want, sizeof(want)) == 0, "invalid caps: nothing");
 }
 
+static void case_mod_set_plan_plus_options(void)
+{
+    RNetLobbyMatchCaps caps;
+    char want[4096];
+    char text[4096];
+    size_t o = 0;
+    int i;
+    printf("  mod set: 16 packages published as plan + options\n");
+    memset(&caps, 0, sizeof(caps));
+    caps.valid = 1;
+    caps.mod_count = 16;
+    for (i = 0; i < 16; ++i) {
+        snprintf(caps.mods[i].id, sizeof(caps.mods[i].id),
+                 "superbomberman5.package-number-%02d", i);
+        snprintf(caps.mods[i].ver, sizeof(caps.mods[i].ver), "0.1.0");
+        snprintf(caps.mods[i].feats, sizeof(caps.mods[i].feats), "feature_%02d", i);
+        o += (size_t)snprintf(text + o, sizeof(text) - o, "%s@0.1.0/feature_%02d%s\n",
+                              caps.mods[i].id, i,
+                              i == 0 ? " stage=snow variant=2" : "");
+    }
+    ck(!encode_mod_set(text, caps.mod_set, sizeof(caps.mod_set), 0),
+       "the full set does not fit the wire field");
+    ck(encode_mod_set(text, caps.mod_set, sizeof(caps.mod_set), 1) &&
+       caps.mod_set[0] == '~', "plan + options fits");
+    ck(room_want_set(&caps, want, sizeof(want)) == 1 && strcmp(want, text) == 0,
+       "guest rebuilds the exact set, options included");
+}
+
 int main(void)
 {
+    case_mod_set_plan_plus_options();
     case_mod_set_vanilla_host();
     case_mod_set_guest_extra_and_realign();
     case_mod_set_plan_only_and_unreadable();
