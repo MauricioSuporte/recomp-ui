@@ -359,9 +359,9 @@ function(recomp_target_launcher_ui TGT)
     # cartridges or NES/SNES controller art. The RUNTIME layout
     # next to the exe stays flat (assets/fonts + assets/img) — the launcher's
     # load paths are unchanged. The standalone preview opts into all explicitly.
-    if(NOT ANDROID)
-        _recomp_ui_stage_assets(${TGT} "${RUI_CONSOLE}")
-    endif()
+    # Android too: the host packs what is staged beside libmain.so into the
+    # APK and extracts it to the internal files folder asset() reads from.
+    _recomp_ui_stage_assets(${TGT} "${RUI_CONSOLE}")
     # Per-console controller image: overrides the default pad.tga (e.g. a
     # PlayStation DualShock for PSX). 24-bit TGA, top-left pixel = colorkey.
     if(RUI_PAD AND EXISTS ${RUI_PAD})
