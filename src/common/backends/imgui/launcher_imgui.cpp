@@ -12230,6 +12230,55 @@ static bool disable_all_mod_features(LauncherModel* m) {
     return true;
 }
 
+/* Turns on every listed feature that is still off. Unlike "Disable all" this is
+ * best effort: a feature the provider refuses (conflict with another feature,
+ * a required owner file such as another game's ROM that is not selected) is
+ * skipped and counted instead of aborting or rolling back the rest. */
+static bool enable_all_mod_features(LauncherModel* m) {
+    const auto* mods = m ? m->mods : nullptr;
+    if (!mods || !mods->feature_count || !mods->feature_get ||
+        !mods->feature_enable) {
+        return false;
+    }
+
+    const int count = mods->feature_count(mods->ctx);
+    std::vector<RecompLauncherCModFeature> features;
+    features.reserve(count > 0 ? (size_t)count : 0);
+    for (int index = 0; index < count; ++index) {
+        RecompLauncherCModFeature feature{};
+        if (!mods->feature_get(mods->ctx, index, &feature)) {
+            mod_note_error(m);
+            return false;
+        }
+        features.push_back(feature);
+    }
+
+    int enabled_now = 0;
+    int skipped = 0;
+    for (const RecompLauncherCModFeature& feature : features) {
+        if (launcher_mod_feature_concealed(mods, &feature) ||
+            feature.enabled)
+            continue;
+        if (mods->feature_enable(mods->ctx, feature.package_id, feature.id,
+                                 1))
+            ++enabled_now;
+        else
+            ++skipped;
+    }
+    if (m->has_bios && m->bios_verify_for_rom_cb)
+        launcher_model_refresh_bios_status(m);
+    if (skipped > 0) {
+        std::snprintf(m->mod_status, sizeof(m->mod_status),
+                      "%d feature(s) enabled, %d could not be enabled "
+                      "(conflict or missing file). Changes apply on PLAY.",
+                      enabled_now, skipped);
+    } else {
+        std::snprintf(m->mod_status, sizeof(m->mod_status),
+                      "All mod features enabled. Changes apply on PLAY.");
+    }
+    return skipped == 0;
+}
+
 /* Packages that never loaded, at the top of the page.
  *
  * A package whose manifest will not parse has no row in the list below -- it
@@ -12309,8 +12358,13 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
             }
         });
     }
-    /* No "Enable all": in a title with many mods it turns on features that
-     * need owner files or conflict with each other, all at once. */
+    /* "Enable all" is best effort: features the provider refuses (conflicts,
+     * missing owner files) are skipped and reported in the status line. */
+    ImGui::SameLine();
+    if (ImGui::Button(ui_text("Enable all")))
+        enable_all_mod_features(m);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", ui_text("Enable every installed mod feature"));
     ImGui::SameLine();
     if (ImGui::Button(ui_text("Disable all")))
         disable_all_mod_features(m);
