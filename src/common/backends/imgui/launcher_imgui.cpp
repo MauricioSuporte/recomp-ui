@@ -15364,7 +15364,15 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
 #if defined(LNG_SDL_RENDERER)
         {
             SDL_Renderer* r = (SDL_Renderer*)p->renderer;
-            SDL_SetRenderScale(r, 1.0f, 1.0f);
+            /* The SDL_Renderer backend does not scale vertices by
+             * FramebufferScale (only clip rects), so the density must be
+             * the renderer's own scale, as in Dear ImGui's SDL3 example. At
+             * 1.0 the 150% desktop drew the UI at logical size and its clip
+             * rects 1.5x too large. */
+            const ImDrawData* dd = ImGui::GetDrawData();
+            const float rscale = (dd && dd->FramebufferScale.x > 0.0f) ? dd->FramebufferScale.x : 1.0f;
+            const float rscale_y = (dd && dd->FramebufferScale.y > 0.0f) ? dd->FramebufferScale.y : 1.0f;
+            SDL_SetRenderScale(r, rscale, rscale_y);
             SDL_SetRenderViewport(r, NULL);
             SDL_SetRenderDrawColorFloat(r, bg.r, bg.g, bg.b, bg.a);
             SDL_RenderClear(r);
