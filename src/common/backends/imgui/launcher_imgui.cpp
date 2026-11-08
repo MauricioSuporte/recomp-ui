@@ -3382,12 +3382,18 @@ void draw_source_selectables(LauncherModel* m, int p) {
             continue;
         }
         if (!g_pads[i].guid[0] || nopt >= kMaxOpts) continue;
+        /* Number identical labels, not only identical GUIDs: two Xbox 360
+         * Wireless pads have distinct GUIDs but one name, and equal labels
+         * were equal ImGui IDs ("2 visible items with conflicting ID"). */
+        auto shown = [&](int k) -> const char* {
+            return (g_pads[k].name[0] && std::strcmp(g_pads[k].name, "Gamepad") != 0)
+                       ? g_pads[k].name : "Controller";
+        };
+        const char* nm = shown(i);
         int same = 0;
         for (int j = 0; j < i; ++j)
-            if (std::strcmp(g_pads[j].guid, g_pads[i].guid) == 0) ++same;
+            if (g_pads[j].guid[0] && std::strcmp(shown(j), nm) == 0) ++same;
         std::snprintf(opts[nopt].guid, sizeof(opts[nopt].guid), "%s", g_pads[i].guid);
-        const char* nm = (g_pads[i].name[0] && std::strcmp(g_pads[i].name, "Gamepad") != 0)
-                             ? g_pads[i].name : "Controller";
         if (same) std::snprintf(opts[nopt].name, sizeof(opts[nopt].name), "%s (%d)", nm, same + 1);
         else std::snprintf(opts[nopt].name, sizeof(opts[nopt].name), "%s", nm);
         opts[nopt].id = g_pads[i].id;
@@ -3422,7 +3428,10 @@ void draw_source_selectables(LauncherModel* m, int p) {
                           opts[i].name, ui_text("(disconnected)"));
         const bool sel = seat_has(p, opts[i]);
         if (claimed) ImGui::BeginDisabled();
-        if (ImGui::Selectable(label, sel) && !claimed) {
+        ImGui::PushID(i); /* unique even if two labels still match */
+        const bool picked = ImGui::Selectable(label, sel);
+        ImGui::PopID();
+        if (picked && !claimed) {
             launcher_model_set_source(m, p, 2, opts[i].id, opts[i].name,
                                      opts[i].guid);
             if (psx) {
@@ -9214,6 +9223,18 @@ static void draw_lobby_room_panel(LauncherModel* m, const LauncherTheme& th,
                                   const RecompLauncherCNetplayCallbacks* np) {
     ImGui::TextColored(col(th.accent2), "ROOM");
     ImGui::Spacing();
+    /* A late joiner sits in the room while the others play; say so, or the
+     * room just looks stuck. Hosts never see it (their match is the one). */
+    if (np && np->room_match_live && np->room_match_live(np->ctx) &&
+        !(np->is_host && np->is_host(np->ctx))) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(col(th.warn), "%s",
+                           ui_text("A match is in progress in this room. You will play from the next match; "
+                                   "chat with the players meanwhile. / Partida em andamento nesta sala: "
+                                   "voce joga a partir da proxima; enquanto isso, converse com os jogadores."));
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+    }
     const bool show_lan_endpoint = m->netplay_local_room;
     if (show_lan_endpoint) {
         char room_ip[64] = "";
@@ -11460,6 +11481,13 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
                                                   : "  [PSX-Link]")
                               : (row.has_password ? "  [locked]" : ""));
             ImGui::TextUnformatted(lobby_label);
+            if (row.match_live) {
+                ImGui::SameLine();
+                ImGui::TextColored(col(th.warn), "%s", ui_text("[In match / Em partida]"));
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", ui_text("A match is running. You can join and play from the next match. / "
+                                                      "Partida em andamento: entre e jogue a partir da proxima."));
+            }
             ImGui::TableSetColumnIndex(1);
             table_row_vcenter(lobby_row_h, text_h);
             ImGui::Text("%d/%d", row.player_count, row.max_slots);
@@ -13119,7 +13147,23 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
          m->view == LNG_VIEW_CONTROLLER)) {
         const float net_w = px(170.0f);
         ImGui::SetCursorScreenPos(ImVec2(play_x - net_w - px(12.0f), cta_y));
-        if (ImGui::Button(ui_text("NETPLAY"), ImVec2(net_w, play_h))) {
+        /* An outdated install (the game sets netplay_notice when a newer
+         * release exists) may not open netplay at all: online rooms only
+         * match one version, and a LAN peer on the new one desyncs too. */
+        const bool outdated = netplay_notice_active(m);
+        if (outdated) ImGui::BeginDisabled();
+        const bool net_clicked = ImGui::Button(ui_text("NETPLAY"), ImVec2(net_w, play_h));
+        if (outdated) {
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", m->netplay_notice);
+            const char* need = ui_text("Update to play online / Atualize para jogar online");
+            const ImVec2 sz = ImGui::CalcTextSize(need);
+            ImGui::SetCursorScreenPos(ImVec2(play_x - net_w - px(12.0f) + (net_w - sz.x) * 0.5f,
+                                             cta_y - sz.y - px(6.0f)));
+            ImGui::TextColored(col(th.warn), "%s", need);
+        }
+        if (net_clicked && !outdated) {
             /* The fork first. Connecting used to start here, which meant a LAN
              * player dialled a lobby server they were never going to use --
              * np_enter_netplay does it now, and only for online. */

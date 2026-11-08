@@ -113,6 +113,9 @@ typedef struct RecompLauncherCNetplayLobby {
      * direct link to the host (drawn with a "~"). 0 from a backend that
      * predates the field, which reads as measured. */
     int  latency_is_estimate;
+    /* Append-only: 1 while the room's match is running (the host publishes
+     * it; a late joiner waits for the next match). 0 from an older backend. */
+    int  match_live;
 } RecompLauncherCNetplayLobby;
 
 /* One player connected to the lobby server, seated or just browsing -- the
@@ -884,6 +887,9 @@ typedef struct RecompLauncherCNetplayCallbacks {
      * Servers that predate it simply keep the legacy path. */
     int  (*relay_via_ice_get)(void* ctx);
     int  (*relay_via_ice_set)(void* ctx, int on);
+    /* Optional (append-only): 1 when the room this client sits in reports a
+     * running match (a guest who just joined plays from the next one). */
+    int  (*room_match_live)(void* ctx);
 } RecompLauncherCNetplayCallbacks;
 
 /* recomp_launcher_run_window honours RECOMP_NETPLAY_LAUNCH through

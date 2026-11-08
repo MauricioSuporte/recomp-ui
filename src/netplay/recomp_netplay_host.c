@@ -1676,6 +1676,9 @@ static int cb_list_get(void *ctx, int index, RecompLauncherCNetplayLobby *out)
   out->allow_spectators = row.allow_spectators;
   out->max_spectators = row.max_spectators;
   out->spectator_count = row.spectator_count;
+#if defined(RNET_LOBBY_HAS_MATCH_LIVE)
+  out->match_live = row.match_live;
+#endif
 #if defined(RNET_LOBBY_HAS_LIST_DIRECT_LATENCY)
   /* A direct probe to the host, timed when the list was opened or
    * refreshed; until it lands (or where it cannot link) the estimate through
@@ -2447,6 +2450,18 @@ static int cb_lobby_spectator_count(void *ctx)
   if (g_hosting_lan || g_joined_lan)
     return 0;
   return rnet_lobby_spectator_count();
+}
+
+static int cb_room_match_live(void *ctx)
+{
+  (void)ctx;
+#if defined(RNET_LOBBY_HAS_MATCH_LIVE)
+  if (g_hosting_lan || g_joined_lan)
+    return 0;
+  return rnet_lobby_match_live();
+#else
+  return 0;
+#endif
 }
 
 static int cb_local_is_spectator(void *ctx)
@@ -4037,6 +4052,7 @@ static RecompLauncherCNetplayCallbacks g_callbacks = {
 #ifdef RUI_HAVE_ICE_HUB
     .relay_via_ice_get = cb_relay_via_ice_get,
     .relay_via_ice_set = cb_relay_via_ice_set,
+    .room_match_live = cb_room_match_live,
 #endif
     .input_prediction_get = cb_input_prediction_get,
     .input_prediction_set = cb_input_prediction_set,
